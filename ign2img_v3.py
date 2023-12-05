@@ -10,6 +10,7 @@ from tqdm import tqdm
 from itertools import chain
 import png
 from concurrent.futures import ThreadPoolExecutor, wait
+from random import sample
 
 def mapValue(value, fromRange, toRange):
     # Figure out how 'wide' each range is
@@ -30,7 +31,16 @@ class ASCPuzzle:
     minAlt: int
 
     def __init__(self, ASCFiles):
-        pass
+        maxAlt = max([f.maxAltitude for f in ASCFiles])
+        minAlt = min([f.minAltitude for f in ASCFiles])
+        minX = min([f.minX for f in ASCFiles])
+        maxX = max([f.maxX for f in ASCFiles])
+        minY = min([f.minY for f in ASCFiles])
+        maxY = max([f.maxY for f in ASCFiles])
+        for f in ASCFiles:
+            pass
+
+
 
 
 class ASCFile:
@@ -39,10 +49,11 @@ class ASCFile:
     minX: float
     minY: float
     rowcount: int
-    _data: ndarray
     minAltitude: float
     maxAltitude: float
+    _data: ndarray
     _filepath: Path
+
 
     def __init__(self, path, metadata_only=True) -> None:
         rowcount = 0
@@ -73,9 +84,8 @@ class ASCFile:
             self.maxY = self.minY + (self.nRows * self.cellSize)
             self.size = (self.maxX-self.minX, self.maxY-self.minY)
 
-    @staticmethod
-    def index2coord(index, nCols=1000) -> tuple:
-        return index % nCols, index // nCols
+    def index2coord(self, index) -> tuple:
+        return index % self.nCols, index // self.nCols
 
     @staticmethod
     def map_value_to_int8_color_value(map_value) -> int:
@@ -86,7 +96,7 @@ class ASCFile:
         return round(mapped_value)
 
     @staticmethod
-    def map_value_to_fmode_color_value(map_value) -> int:
+    def map_value_to_fmode_color_value(map_value) -> float:
         _maxColorValue = 0x7FFFFFFF
         _maxMapValue = 4100
         mapvalue_relative_to_max = map_value / _maxMapValue
@@ -116,6 +126,9 @@ class ASCFile:
 
     def get_color_value(self, x, y) -> int:
         return self.map_value_to_8b_color_value(self.get_altitude(x, y))
+
+    def coord2index(self, x, y):
+        return x * self.nCols + y
 
 
 def one_image(inpath, outpath) -> None:
@@ -157,7 +170,7 @@ def multiple_images(inpaths, outpath: Path) -> None:
     for file in tqdm(ascfiles, desc="Building image"):
 
         for index in range(0, nCols*nRows):
-            x, y = ASCFile.index2coord(index)
+            x, y = file.index2coord(index)
             localx = x + ((file.minX - offsetX) / cellSize)
             localy = y + ((file.minY - offsetY) / cellSize)
             try:
@@ -166,8 +179,10 @@ def multiple_images(inpaths, outpath: Path) -> None:
                 print("!!!")
                 print(file.data[x,y])
     #tifffile.imwrite(outpath, thebigarray, shape=thebigarray.shape, dtype=np.int32)
-    np.rot90(thebigarray, 3)
-    png.from_array(thebigarray.tolist(), mode='L;16').save(outpath)
+    thebigarray = np.rot90(thebigarray)
+    thebigarray = np.rot90(thebigarray)
+    img = png.from_array(thebigarray.tolist(), mode='L;16')
+    img.save(outpath)
 
 
 def multiple_images_mt(inpaths, outpath: Path) -> None:
@@ -199,8 +214,9 @@ def multiple_images_mt(inpaths, outpath: Path) -> None:
         for file in ascfiles:
             futs.append(tpe.submit(process_ascdata_to_map_array, file, thebigarray, nCols, nRows, cellSize, offsetX, offsetY))
         wait(futs)
-    np.rot90(thebigarray, 3)
-    png.from_array(thebigarray.tolist(), mode='L;16').save(outpath)
+    thebigarray = np.rot90(thebigarray)
+    img = png.from_array(thebigarray.tolist(), mode='L;16')
+    img.save(outpath)
 
 
 def process_ascdata_to_map_array(ascfile: ASCFile, array: np.array, nCols: int, nRows: int, cellSize: int, offsetX: int, offsetY:int):
@@ -269,41 +285,11 @@ def stitch(directory):
 """
 
 if __name__ == "__main__":
-    files = [
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0825_6475_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0825_6500_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0825_6525_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0850_6450_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0850_6475_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0850_6500_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0850_6525_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0850_6550_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0875_6425_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0875_6450_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0875_6475_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0875_6500_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0875_6525_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0875_6550_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6425_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6450_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6475_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6500_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6525_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6425_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6450_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6475_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6500_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0950_6425_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0950_6450_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0950_6475_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0950_6500_MNT_LAMB93_IGN69.asc")
-    ]
     chartreuse = [
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6475_MNT_LAMB93_IGN69.asc"),
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6500_MNT_LAMB93_IGN69.asc"),
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6475_MNT_LAMB93_IGN69.asc"),
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6500_MNT_LAMB93_IGN69.asc"),
-
     ]
 
     rhone_alpes = [Path("S:/Curiosités/IGN/BD ALTI - France")/Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - France"))]
@@ -311,9 +297,7 @@ if __name__ == "__main__":
     # one_image(Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6475_MNT_LAMB93_IGN69.asc"),Path("C:/Users/Antonin/Desktop/test2.tiff"))
     # multiple_images(files,Path("S:/Curiosités/IGN/BD ALTI - 38/beegoutput.tiff"))
 
-
-
-    multiple_images(rhone_alpes, Path("S:/Curiosités/IGN/rhonealpes.png"))
+    multiple_images(sample(rhone_alpes,10), Path("S:/Curiosités/IGN/rhonealpes.png"))
 
     #os.chdir("F:/RGEALTI_MNT_1M_ASC_LAMB93_IGN69_D038_20210118")
     #multiple_images2([Path(asc) for asc in os.listdir(".")], Path("."))
