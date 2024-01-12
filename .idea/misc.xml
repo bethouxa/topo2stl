@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.8 (Map2STL)" project-jdk-type="Python SDK" />
+  <component name="Black">
+    <option name="enabledOnReformat" value="true" />
+    <option name="executionMode" value="BINARY" />
+    <option name="pathToExecutable" value="C:\Users\Antonin\AppData\Local\Programs\Python\Python38\Scripts\black.exe" />
+    <option name="sdkUUID" value="417d524f-9260-4bcf-8fd7-5eb220af0b86" />
+  </component>
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.10 (Map2STL)" project-jdk-type="Python SDK" />
 </project>

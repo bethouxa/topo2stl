@@ -1,16 +1,18 @@
 import re
 
+import numpy
 import numpy as np
 from pathlib import Path
+
+import skimage.measure.block
 import tifffile
 import os
 
+import math
 from numpy import ndarray
 from tqdm import tqdm
-from itertools import chain
 import png
 from concurrent.futures import ThreadPoolExecutor, wait
-from random import sample
 
 
 def mapValue(value, fromRange, toRange):
@@ -29,10 +31,9 @@ def coordsToIndex(x, y, nCols) -> int:
     return y * nCols + x
 
 
-
 class ASCFile:
-    nCols: float
-    nRows: float
+    nCols: int
+    nRows: int
     minX: float
     minY: float
     rowcount: int
@@ -50,29 +51,33 @@ class ASCFile:
             self.maxAltitude = 0
             self.minAltitude = 9999
             datalines = []
-            for line in file:
-                rowcount += 1
-                if rowcount == 1:
-                    self.nCols = int(re.search("[0-9.]+", line).group())
-                elif rowcount == 2:
-                    self.nRows = int(re.search("[0-9.]+", line).group())
-                elif rowcount == 3:
-                    self.minX = float(re.search("[0-9.]+", line).group())
-                elif rowcount == 4:
-                    self.minY = float(re.search("[0-9.]+", line).group())
-                elif rowcount == 5:
-                    self.cellSize = float(re.search("[0-9.]+", line).group())
-                elif rowcount == 6:
-                    pass
-                elif rowcount >= 7:
-                    self.maxAltitude = float(np.max([self.maxAltitude]+[float(digit) for digit in line.split()]))
-                    self.minAltitude = float(np.min([self.minAltitude]+[float(digit) for digit in line.split()]))
+            try:
+                for line in file:
+                    rowcount += 1
+                    if rowcount == 1:
+                        self.nCols = int(re.search("[0-9.]+", line).group())
+                    elif rowcount == 2:
+                        self.nRows = int(re.search("[0-9.]+", line).group())
+                    elif rowcount == 3:
+                        self.minX = float(re.search("[0-9.]+", line).group())
+                    elif rowcount == 4:
+                        self.minY = float(re.search("[0-9.]+", line).group())
+                    elif rowcount == 5:
+                        self.cellSize = float(re.search("[0-9.]+", line).group())
+                    elif rowcount == 6:
+                        pass
+                    elif rowcount >= 7:
+                        self.maxAltitude = float(np.max([self.maxAltitude]+[float(digit) for digit in line.split()]))
+                        self.minAltitude = float(np.min([self.minAltitude]+[float(digit) for digit in line.split()]))
+            except:
+                print("Cannot parse "+ self.name)
+                raise
             self.maxX = self.minX + (self.nCols * self.cellSize)
             self.maxY = self.minY + (self.nRows * self.cellSize)
             self.size = (self.maxX-self.minX, self.maxY-self.minY)
 
-    def index2coord(self, index) -> tuple:
-        return index % self.nCols, index // self.nCols
+    def index2coord(self, index, scale=1) -> tuple:
+        return index % math.ceil(self.nCols/scale), index // math.ceil(self.nCols/scale)
 
     @staticmethod
     def map_value_to_int8_color_value(map_value) -> int:
@@ -91,7 +96,7 @@ class ASCFile:
         return mapped_value
 
     def get_altitude(self, x, y) -> float:
-        return self.data[x][y]
+        return self.data()[x][y]
 
     def data(self) -> ndarray:
         try:
@@ -114,7 +119,7 @@ class ASCFile:
     def get_color_value(self, x, y) -> int:
         return self.map_value_to_8b_color_value(self.get_altitude(x, y))
 
-    def coord2index(self, x, y):
+    def coord2index(self, x, y) -> int:
         return x * self.nCols + y
 
     def downscale(self, x, y, factor) -> tuple:
@@ -172,7 +177,6 @@ def multiple_images(inpaths, outpath: Path) -> None:
     maxX = max([f.maxX for f in ascfiles])
     minY = min([f.minY for f in ascfiles])
     maxY = max([f.maxY for f in ascfiles])
-
     offsetX = minX
     offsetY = minY
     size_x = int((maxX - minX) / cellSize)  # Assuming cellSize is the same for all files
@@ -190,7 +194,7 @@ def multiple_images(inpaths, outpath: Path) -> None:
                 thebigarray[int(localx), int(localy)] = int(mapValue(file.data()[x,y], (0, 4500), (0x0, 0x7fff)))
             except Exception:
                 print("!!!")
-                print(file.data[x,y])
+                print(file.data()[x,y])
     #tifffile.imwrite(outpath, thebigarray, shape=thebigarray.shape, dtype=np.int32)
     thebigarray = np.rot90(thebigarray)
     thebigarray = np.rot90(thebigarray)
@@ -210,7 +214,7 @@ def multiple_images_scaled(inpaths: list, outpath: Path, downscalefactor=1, rela
     assert all([asc.nRows == ascfiles[0].nRows for asc in ascfiles])  # Check that nRows is uniform across all files
     nRows = ascfiles[0].nRows
 
-    assert nCols % downscalefactor == 0
+    assert nCols % downscalefactor == 0  # TODO: remove, good luck lmao
 
     imageminX = min([f.minX for f in ascfiles])
     imagemaxX = max([f.maxX for f in ascfiles])
@@ -219,26 +223,41 @@ def multiple_images_scaled(inpaths: list, outpath: Path, downscalefactor=1, rela
     imageminZ = min([f.minAltitude for f in ascfiles])
     imagemaxZ = max([f.maxAltitude for f in ascfiles])
 
-    size_x = int((imagemaxX - imageminX) / cellSize / downscalefactor)
-    size_y = int((imagemaxY - imageminY) / cellSize / downscalefactor)
+    size_x = int(math.ceil((imagemaxX - imageminX) / cellSize / downscalefactor))
+    size_y = int(math.ceil((imagemaxY - imageminY) / cellSize / downscalefactor))
 
     thebigarray = np.zeros((size_x, size_y), dtype=np.int32)
 
     for ascFile in tqdm(ascfiles, desc="Building image"):
 
-        for index in range(0, nCols * nRows // downscalefactor**2):  # Size of final array is inversely proportional to scale factor squared
-            filex, filey = [coord * downscalefactor for coord in ascFile.index2coord(index)]
-            imagex = ascFile.index2coord(index)[0] + (ascFile.minX - imageminX) / cellSize
-            imagey = ascFile.index2coord(index)[1] + (ascFile.minY - imageminY) / cellSize
-            # https://scikit-image.org/docs/dev/api/skimage.measure.html#skimage.measure.block_reduce
+        # sampleCount = nCols * nRows // downscalefactor**2
+        downsampled_image = skimage.measure.block.block_reduce(ascFile.data(), block_size=downscalefactor, func=numpy.mean)
+
+        for index in range(0, downsampled_image.size):
+
+            # Get final image position from image local position and downsample factor
+            # Assume that downsampled position = position * downsample factor
+
+            # REMINDER:
+            # Absolute position = ( relative position + offset of file as is ) / factor
+
+            # For pixel in image
+            # Get position of pixel in downsampled image
+            # Convert to final image position
+            # Insert into final array
+
+            x, y = ascFile.index2coord(index, downscalefactor)
+            imagex = (x + ((ascFile.minX - imageminX) / cellSize) / downscalefactor )
+            imagey = (y + ((ascFile.minY - imageminY) / cellSize) / downscalefactor )
             try:
-                if relativeAltitude:
-                    thebigarray[int(imagex), int(imagey)] = int(mapValue(ascFile.data()[filex, filey], (imageminZ, imagemaxZ), (0x0, 0x7FFF)))
-                else:
-                    thebigarray[int(imagex), int(imagey)] = int(mapValue(ascFile.data()[filex, filey], (0, 4500), (0x0, 0x7FFF)))
+                thebigarray[int(imagex), int(imagey)] = int(mapValue(downsampled_image[x,y], (0, 4500), (0x0, 0x7fff)))
             except Exception:
                 print("!!!")
-                print(ascFile.data()[filex, filey])
+                print(ascFile.data()[x*downscalefactor,y*downscalefactor])
+                print(downsampled_image[x,y])
+                print(index)
+                print("!!!")
+                raise
     thebigarray = np.rot90(thebigarray)
     img = png.from_array(thebigarray.tolist(), mode="L;16")
     img.save(outpath)
@@ -300,14 +319,18 @@ if __name__ == "__main__":
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6500_MNT_LAMB93_IGN69.asc"),
     ]
 
-    rhone_alpes = [Path("S:/Curiosités/IGN/BD ALTI - France")/Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - France"))]
+    oneimg = [Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6475_MNT_LAMB93_IGN69.asc")]
+
+    isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
 
     # one_image(Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6475_MNT_LAMB93_IGN69.asc"),Path("C:/Users/Antonin/Desktop/test2.tiff"))
     # multiple_images(files,Path("S:/Curiosités/IGN/BD ALTI - 38/beegoutput.tiff"))
 
     # multiple_images(sample(rhone_alpes, 10), Path("S:/Curiosités/IGN/rhonealpes.png"))
 
-    multiple_images_scaled(chartreuse,Path("S:/Curiosités/IGN/charteusescale4.png"), downscalefactor=4)
+    multiple_images_scaled(isere, Path("S:/Curiosités/IGN/isere2.png"), downscalefactor=2)
+
+    # multiple_images_scaled(chartreuse,Path("S:/Curiosités/IGN/charteusescale4.png"), downscalefactor=2)
 
     # os.chdir("F:/RGEALTI_MNT_1M_ASC_LAMB93_IGN69_D038_20210118")
     # multiple_images2([Path(asc) for asc in os.listdir(".")], Path("."))
