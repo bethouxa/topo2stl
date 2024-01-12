@@ -12,6 +12,7 @@ import png
 from concurrent.futures import ThreadPoolExecutor, wait
 from random import sample
 
+
 def mapValue(value, fromRange, toRange):
     # Figure out how 'wide' each range is
     fromSpan = fromRange[0] - fromRange[1]
@@ -23,23 +24,9 @@ def mapValue(value, fromRange, toRange):
     # Convert the 0-1 range into a value in the right range.
     return toRange[0] + (valueScaled * toSpan)
 
-def CoordsToIndex(x, y, nCols) -> int:
+
+def coordsToIndex(x, y, nCols) -> int:
     return y * nCols + x
-
-class ASCPuzzle:
-    maxAlt: int
-    minAlt: int
-
-    def __init__(self, ASCFiles):
-        maxAlt = max([f.maxAltitude for f in ASCFiles])
-        minAlt = min([f.minAltitude for f in ASCFiles])
-        minX = min([f.minX for f in ASCFiles])
-        maxX = max([f.maxX for f in ASCFiles])
-        minY = min([f.minY for f in ASCFiles])
-        maxY = max([f.maxY for f in ASCFiles])
-        for f in ASCFiles:
-            pass
-
 
 
 
@@ -49,11 +36,11 @@ class ASCFile:
     minX: float
     minY: float
     rowcount: int
+    cellsize: float
     minAltitude: float
     maxAltitude: float
     _data: ndarray
     _filepath: Path
-
 
     def __init__(self, path, metadata_only=True) -> None:
         rowcount = 0
@@ -78,8 +65,8 @@ class ASCFile:
                 elif rowcount == 6:
                     pass
                 elif rowcount >= 7:
-                    self.maxAltitude = np.max([self.maxAltitude]+[float(digit) for digit in line.split()] for line in file)
-                    self.minAltitude = np.min([self.minAltitude]+[float(digit) for digit in line.split()] for line in file)
+                    self.maxAltitude = float(np.max([self.maxAltitude]+[float(digit) for digit in line.split()]))
+                    self.minAltitude = float(np.min([self.minAltitude]+[float(digit) for digit in line.split()]))
             self.maxX = self.minX + (self.nCols * self.cellSize)
             self.maxY = self.minY + (self.nRows * self.cellSize)
             self.size = (self.maxX-self.minX, self.maxY-self.minY)
@@ -130,6 +117,32 @@ class ASCFile:
     def coord2index(self, x, y):
         return x * self.nCols + y
 
+    def downscale(self, x, y, factor) -> tuple:
+        return (x*factor,y*factor)
+
+
+class ASCPuzzle:
+    maxAlt: int
+    minAlt: int
+    files: list
+
+    def __init__(self, ASCFiles):
+        maxAlt = max([f.maxAltitude for f in ASCFiles])
+        minAlt = min([f.minAltitude for f in ASCFiles])
+        minX = min([f.minX for f in ASCFiles])
+        maxX = max([f.maxX for f in ASCFiles])
+        minY = min([f.minY for f in ASCFiles])
+        maxY = max([f.maxY for f in ASCFiles])
+        for f in ASCFiles:
+            pass
+
+        def getContainingASCFile(self, x, y):
+            if x < self.minX or x > self.maxX or y < minY or y > maxY:
+                raise ValueError
+            for ascfile in self.ASCFiles:
+                if ascfile.minX < x < ascfile.minX + ascfile.nCols * ascfile.cellsize and ascfile.minY < y < ascfile.minY + ascfile.nCols * ascfile.cellsize:
+                    return ascfile
+
 
 def one_image(inpath, outpath) -> None:
     asc = ASCFile(inpath)
@@ -171,8 +184,8 @@ def multiple_images(inpaths, outpath: Path) -> None:
 
         for index in range(0, nCols*nRows):
             x, y = file.index2coord(index)
-            localx = x + ((file.minX - offsetX) / cellSize)
-            localy = y + ((file.minY - offsetY) / cellSize)
+            localx = (x + ((file.minX - offsetX) / cellSize))
+            localy = (y + ((file.minY - offsetY) / cellSize))
             try:
                 thebigarray[int(localx), int(localy)] = int(mapValue(file.data()[x,y], (0, 4500), (0x0, 0x7fff)))
             except Exception:
@@ -182,6 +195,52 @@ def multiple_images(inpaths, outpath: Path) -> None:
     thebigarray = np.rot90(thebigarray)
     thebigarray = np.rot90(thebigarray)
     img = png.from_array(thebigarray.tolist(), mode='L;16')
+    img.save(outpath)
+
+
+def multiple_images_scaled(inpaths: list, outpath: Path, downscalefactor=1, relativeAltitude=False) -> None:
+    ascfiles = []
+    for inpath in tqdm(inpaths, desc="Reading ASC files"):
+        ascfiles.append(ASCFile(inpath))
+
+    assert all([asc.cellSize == ascfiles[0].cellSize for asc in ascfiles])  # Check that cellsize is uniform across all files
+    cellSize = ascfiles[0].cellSize
+    assert all([asc.nCols == ascfiles[0].nCols for asc in ascfiles])  # Check that nCols is uniform across all files
+    nCols = ascfiles[0].nCols
+    assert all([asc.nRows == ascfiles[0].nRows for asc in ascfiles])  # Check that nRows is uniform across all files
+    nRows = ascfiles[0].nRows
+
+    assert nCols % downscalefactor == 0
+
+    imageminX = min([f.minX for f in ascfiles])
+    imagemaxX = max([f.maxX for f in ascfiles])
+    imageminY = min([f.minY for f in ascfiles])
+    imagemaxY = max([f.maxY for f in ascfiles])
+    imageminZ = min([f.minAltitude for f in ascfiles])
+    imagemaxZ = max([f.maxAltitude for f in ascfiles])
+
+    size_x = int((imagemaxX - imageminX) / cellSize / downscalefactor)
+    size_y = int((imagemaxY - imageminY) / cellSize / downscalefactor)
+
+    thebigarray = np.zeros((size_x, size_y), dtype=np.int32)
+
+    for ascFile in tqdm(ascfiles, desc="Building image"):
+
+        for index in range(0, nCols * nRows // downscalefactor**2):  # Size of final array is inversely proportional to scale factor squared
+            filex, filey = [coord * downscalefactor for coord in ascFile.index2coord(index)]
+            imagex = ascFile.index2coord(index)[0] + (ascFile.minX - imageminX) / cellSize
+            imagey = ascFile.index2coord(index)[1] + (ascFile.minY - imageminY) / cellSize
+            # https://scikit-image.org/docs/dev/api/skimage.measure.html#skimage.measure.block_reduce
+            try:
+                if relativeAltitude:
+                    thebigarray[int(imagex), int(imagey)] = int(mapValue(ascFile.data()[filex, filey], (imageminZ, imagemaxZ), (0x0, 0x7FFF)))
+                else:
+                    thebigarray[int(imagex), int(imagey)] = int(mapValue(ascFile.data()[filex, filey], (0, 4500), (0x0, 0x7FFF)))
+            except Exception:
+                print("!!!")
+                print(ascFile.data()[filex, filey])
+    thebigarray = np.rot90(thebigarray)
+    img = png.from_array(thebigarray.tolist(), mode="L;16")
     img.save(outpath)
 
 
@@ -232,57 +291,6 @@ def process_ascdata_to_map_array(ascfile: ASCFile, array: np.array, nCols: int, 
             print("!!!")
             print(ascfile.data()[x, y])
 
-def multiple_images2(inpaths: list, outpath: Path) -> None:
-    ascfiles = []
-    for inpath in tqdm(inpaths, desc='Import inputs'):
-        ascfiles.append(ASCFile(inpath))
-
-    # Computing ASC set properties
-    minX = min([f.minX for f in ascfiles])
-    maxX = max([f.maxX for f in ascfiles])
-    minY = min([f.minY for f in ascfiles])
-    maxY = max([f.maxY for f in ascfiles])
-    minAltitude = min([f.minAltitude for f in ascfiles])
-    maxAltitude = max([f.maxAltitude for f in ascfiles])
-
-    assert all([asc.cellSize == ascfiles[0].cellSize for asc in ascfiles])  # Check that cellsize is uniform across all files
-    cellSize = ascfiles[0].cellSize
-    assert all([asc.nCols == ascfiles[0].nCols for asc in ascfiles])  # Check that nCols is uniform across all files
-    nCols = ascfiles[0].nCols
-    assert all([asc.nRows == ascfiles[0].nRows for asc in ascfiles])  # Check that nRows is uniform across all files
-    nRows = ascfiles[0].nRows
-
-    for file in tqdm(ascfiles,desc=file.name):
-        gridPosX = file.minX - minX / (nCols*cellSize)
-        grisPosY = file.minY - minY / (nRows*cellSize)
-        index = ASCFile.coord2index(gridPosX, grisPosY, nCols)
-        tifffile.imwrite(outpath/Path("tiles")/Path("asc-tiff-"+str(index)+".tiff"), scaledValues)
-
-
-
-
-"""
-def stitch(directory):
-    files = listdir(directory)
-    ascfiles = list(filter(lambda f: f.endswith(".asc"), files))
-    ascs = []
-    for file in ascfiles:
-        ascs.append(ASCFile(file))
-    min_X = min([asc.minX for asc in ascs])
-    max_X = max([asc.minX for asc in ascs]) + ascs[0].sizeX
-    min_Y = min([asc.minY for asc in ascs])
-    max_Y = max([asc.minY for asc in ascs]) + ascs[0].sizeY
-
-    size_x = max_X - min_X
-    size_y = max_Y - min_Y
-
-    thebigarray = np.zeros((size_x,size_y),dtype=np.int32)
-
-
-
-    for asc in ascs:
-        pass
-"""
 
 if __name__ == "__main__":
     chartreuse = [
@@ -297,13 +305,15 @@ if __name__ == "__main__":
     # one_image(Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6475_MNT_LAMB93_IGN69.asc"),Path("C:/Users/Antonin/Desktop/test2.tiff"))
     # multiple_images(files,Path("S:/Curiosités/IGN/BD ALTI - 38/beegoutput.tiff"))
 
-    multiple_images(sample(rhone_alpes,10), Path("S:/Curiosités/IGN/rhonealpes.png"))
+    # multiple_images(sample(rhone_alpes, 10), Path("S:/Curiosités/IGN/rhonealpes.png"))
 
-    #os.chdir("F:/RGEALTI_MNT_1M_ASC_LAMB93_IGN69_D038_20210118")
-    #multiple_images2([Path(asc) for asc in os.listdir(".")], Path("."))
+    multiple_images_scaled(chartreuse,Path("S:/Curiosités/IGN/charteusescale4.png"), downscalefactor=4)
+
+    # os.chdir("F:/RGEALTI_MNT_1M_ASC_LAMB93_IGN69_D038_20210118")
+    # multiple_images2([Path(asc) for asc in os.listdir(".")], Path("."))
 
 
 
-    #multiple_images(os.listdir("."), "S:/Curiosités/IGN/RGEALTI_38.tiff")
+    # multiple_images(os.listdir("."), "S:/Curiosités/IGN/RGEALTI_38.tiff")
 
     print("OK!")
