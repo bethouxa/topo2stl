@@ -122,7 +122,7 @@ class ASCFile:
         return x * self.nCols + y
 
 
-def process_files(inpaths: list, outpath: Path, downscalefactor=1, relativeAltitude=False) -> None:
+def process_files(inpaths: list, outpath: Path, downscalefactor=1, transparency_on_empty=False, relativeAltitude=False) -> None:
     ascfiles = []
     for inpath in tqdm(inpaths, desc="Reading ASC files"):
         ascfiles.append(ASCFile(inpath))
@@ -146,7 +146,10 @@ def process_files(inpaths: list, outpath: Path, downscalefactor=1, relativeAltit
     size_x = int(math.ceil((imagemaxX - imageminX) / cellSize / downscalefactor))
     size_y = int(math.ceil((imagemaxY - imageminY) / cellSize / downscalefactor))
 
-    thebigarray = np.zeros((size_x*2, size_y), dtype=np.int32) # *2 because 2 channels. Default value of 0 = transparent unless worked on later
+    if transparency_on_empty:
+        thebigarray = np.zeros((size_x*2, size_y), dtype=np.int32) # *2 because 2 channels. Default value of 0 = transparent unless worked on later
+    else:
+        thebigarray = np.zeros((size_x, size_y), dtype=np.int32) # *2 because 2 channels. Default value of 0 = transparent unless worked on later
 
     for ascFile in tqdm(ascfiles, desc="Building image"):
         downsampled_image = skimage.measure.block.block_reduce(ascFile.data(), block_size=downscalefactor, func=numpy.mean)
@@ -155,8 +158,11 @@ def process_files(inpaths: list, outpath: Path, downscalefactor=1, relativeAltit
             imagex = (x + ((ascFile.minX - imageminX) / cellSize) / downscalefactor )
             imagey = (y + ((ascFile.minY - imageminY) / cellSize) / downscalefactor )
             try:
-                thebigarray[int(imagex*2), int(imagey)] = int(mapValue(downsampled_image[x,y], (0, 4500), (0x0, 0x7fff))) # Color
-                thebigarray[int(imagex*2+1), int(imagey)] = 0xffff #Transparency
+                if transparency_on_empty:
+                    thebigarray[int(imagex*2), int(imagey)] = int(mapValue(downsampled_image[x,y], (0, 4500), (0x0, 0x7fff))) # Color
+                    thebigarray[int(imagex*2+1), int(imagey)] = 0xffff #Transparency
+                else:
+                    thebigarray[int(imagex), int(imagey)] = int(mapValue(downsampled_image[x,y], (0, 4500), (0x0, 0x7fff))) # Color
             except Exception:
                 print("!!!")
                 print(ascFile.data()[x*downscalefactor,y*downscalefactor])
@@ -165,7 +171,10 @@ def process_files(inpaths: list, outpath: Path, downscalefactor=1, relativeAltit
                 print("!!!")
                 raise
     thebigarray = np.rot90(thebigarray)
-    img = png.from_array(thebigarray.tolist(), mode="LA;16")
+    if transparency_on_empty:
+        img = png.from_array(thebigarray.tolist(), mode="LA;16")
+    else:
+        img = png.from_array(thebigarray.tolist(), mode="L;16")
     img.save(outpath)
 
 
@@ -175,7 +184,7 @@ if __name__ == "__main__":
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6475_MNT_LAMB93_IGN69.asc"),
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6500_MNT_LAMB93_IGN69.asc"),
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6475_MNT_LAMB93_IGN69.asc"),
-        #Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6500_MNT_LAMB93_IGN69.asc"),
+        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6500_MNT_LAMB93_IGN69.asc"),
     ]
 
     oneimg = [Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6475_MNT_LAMB93_IGN69.asc")]
