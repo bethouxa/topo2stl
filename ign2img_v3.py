@@ -124,19 +124,8 @@ class ASCFile:
         try:
             return self._data
         except AttributeError:
-            with open(self._filepath, 'r', encoding="utf8") as f:
-                datalines = []
-                rowcount = 0
-                for line in f:
-                    rowcount += 1
-                    if rowcount < 7:
-                        pass
-                    else:
-                        datalines.append([float(digit) for digit in line.split()])
-                self._data = np.concatenate(datalines)
-                self._data = np.reshape(self._data, (self.nCols, self.nRows))
-                self._data = np.rot90(self._data, -1)
-                return self._data
+            self._data = np.loadtxt(self._filepath, dtype=float, skiprows=7, encoding='utf-8')
+            return self._data
 
 
     def coord2index(self, x, y) -> int:
