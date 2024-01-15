@@ -11,6 +11,8 @@ import math
 from numpy import ndarray
 from tqdm import tqdm
 import png
+from typing import Callable
+import itertools
 
 
 def mapValue(value, fromRange, toRange):
@@ -30,7 +32,7 @@ def coordsToIndex(x, y, nCols) -> int:
 
 
 def downscale(x, y, factor) -> tuple:
-    return (x*factor,y*factor)
+    return x*factor, y*factor
 
 
 class ASCFile:
@@ -45,34 +47,29 @@ class ASCFile:
     _data: ndarray
     _filepath: Path
 
-    def __init__(self, path, metadata_only=True) -> None:
+    def __init__(self, path) -> None:
         rowcount = 0
         self._filepath = path
         with open(path, 'r', encoding="utf8") as file:
             self.name = os.path.basename(file.name)
-            self.maxAltitude = 0
-            self.minAltitude = 9999
-            datalines = []
+            self._maxAltitude = None
+            self._minAltitude = None
             try:
-                for line in file:
+                for line in itertools.islice(file, 6):  # Elems 0 to 5 inclusive
                     rowcount += 1
-                    if rowcount == 1:
-                        self.nCols = int(re.search("[0-9.]+", line).group())
-                    elif rowcount == 2:
-                        self.nRows = int(re.search("[0-9.]+", line).group())
-                    elif rowcount == 3:
-                        self.minX = float(re.search("[0-9.]+", line).group())
-                    elif rowcount == 4:
-                        self.minY = float(re.search("[0-9.]+", line).group())
-                    elif rowcount == 5:
-                        self.cellSize = float(re.search("[0-9.]+", line).group())
-                    elif rowcount == 6:
-                        pass
-                    elif rowcount >= 7:
-                        self.maxAltitude = float(np.max([self.maxAltitude]+[float(digit) for digit in line.split()]))
-                        self.minAltitude = float(np.min([self.minAltitude]+[float(digit) for digit in line.split()]))
-            except:
-                print("Cannot parse "+ self.name)
+                    match rowcount:
+                        case 1:
+                            self.nCols = int(re.search("[0-9.]+", line).group())
+                        case 2:
+                            self.nRows = int(re.search("[0-9.]+", line).group())
+                        case 3:
+                            self.minX = float(re.search("[0-9.]+", line).group())
+                        case 4:
+                            self.minY = float(re.search("[0-9.]+", line).group())
+                        case 5:
+                            self.cellSize = float(re.search("[0-9.]+", line).group())
+            except Exception:
+                print("Cannot parse " + self.name)
                 raise
             self.maxX = self.minX + (self.nCols * self.cellSize)
             self.maxY = self.minY + (self.nRows * self.cellSize)
@@ -100,6 +97,29 @@ class ASCFile:
     def get_altitude(self, x, y) -> float:
         return self.data()[x][y]
 
+    @property
+    def minAltitude(self) -> float:
+        try:
+            return self._minAltitude
+        except AttributeError:
+            with open(self._filepath, 'r', encoding="utf8") as file:
+                for line in itertools.islice(file, 7, None):
+                    m = float(np.min([self.minAltitude]+[float(digit) for digit in line.split()]))
+            self._minAltitude = m
+            return self._minAltitude
+
+    @property
+    def maxAltitude(self) -> float:  # Lazyload
+        try:
+            return self._minAltitude
+        except AttributeError:
+            with open(self._filepath, 'r', encoding="utf8") as file:
+                for line in itertools.islice(file, 7, None):
+                    m = float(np.min([self.minAltitude]+[float(digit) for digit in line.split()]))
+            self._minAltitude = m
+            return self._minAltitude
+
+    @property
     def data(self) -> ndarray:
         try:
             return self._data
@@ -118,14 +138,23 @@ class ASCFile:
                 self._data = np.rot90(self._data, -1)
                 return self._data
 
+
     def coord2index(self, x, y) -> int:
         return x * self.nCols + y
 
 
-def process_files(inpaths: list, outpath: Path, downscalefactor=1, transparency_on_empty=False, relativeAltitude=False) -> None:
+def load_ascfiles(inpaths: list):
     ascfiles = []
     for inpath in tqdm(inpaths, desc="Reading ASC files"):
         ascfiles.append(ASCFile(inpath))
+    return ascfiles
+
+
+def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = None, relativeAltitude=False) -> None:
+    if modifier is None:
+        def modifier(value): return value
+
+    ascfiles = load_ascfiles(inpaths)
 
     assert all([asc.cellSize == ascfiles[0].cellSize for asc in ascfiles])  # Check that cellsize is uniform across all files
     cellSize = ascfiles[0].cellSize
@@ -140,33 +169,33 @@ def process_files(inpaths: list, outpath: Path, downscalefactor=1, transparency_
     imagemaxX = max([f.maxX for f in ascfiles])
     imageminY = min([f.minY for f in ascfiles])
     imagemaxY = max([f.maxY for f in ascfiles])
-    imageminZ = min([f.minAltitude for f in ascfiles])
-    imagemaxZ = max([f.maxAltitude for f in ascfiles])
+    # imageminZ = min([f.minAltitude for f in ascfiles])
+    # imagemaxZ = max([f.maxAltitude for f in ascfiles])
 
     size_x = int(math.ceil((imagemaxX - imageminX) / cellSize / downscalefactor))
     size_y = int(math.ceil((imagemaxY - imageminY) / cellSize / downscalefactor))
 
     if transparency_on_empty:
-        thebigarray = np.zeros((size_x*2, size_y), dtype=np.int32) # *2 because 2 channels. Default value of 0 = transparent unless worked on later
+        thebigarray = np.zeros((size_x*2, size_y), dtype=np.int32)  # *2 because 2 channels. Default value of 0 = transparent unless worked on later
     else:
-        thebigarray = np.zeros((size_x, size_y), dtype=np.int32) # *2 because 2 channels. Default value of 0 = transparent unless worked on later
+        thebigarray = np.zeros((size_x, size_y), dtype=np.int32)
 
     for ascFile in tqdm(ascfiles, desc="Building image"):
-        downsampled_image = skimage.measure.block.block_reduce(ascFile.data(), block_size=downscalefactor, func=numpy.mean)
+        downsampled_image = skimage.measure.block.block_reduce(ascFile.data, block_size=downscalefactor, func=numpy.mean)
         for index in range(0, downsampled_image.size):
             x, y = ascFile.index2coord(index, downscalefactor)
-            imagex = (x + ((ascFile.minX - imageminX) / cellSize) / downscalefactor )
-            imagey = (y + ((ascFile.minY - imageminY) / cellSize) / downscalefactor )
+            imagex = (x + ((ascFile.minX - imageminX) / cellSize) / downscalefactor)
+            imagey = (y + ((ascFile.minY - imageminY) / cellSize) / downscalefactor)
             try:
                 if transparency_on_empty:
-                    thebigarray[int(imagex*2), int(imagey)] = int(mapValue(downsampled_image[x,y], (0, 4500), (0x0, 0x7fff))) # Color
-                    thebigarray[int(imagex*2+1), int(imagey)] = 0xffff #Transparency
+                    thebigarray[int(imagex*2),   int(imagey)] = int(mapValue(modifier(downsampled_image[x, y]), (modifier(0), modifier(4500)), (0x0, 0x7fff)))  # Color
+                    thebigarray[int(imagex*2+1), int(imagey)] = 0xffff  # Transparency
                 else:
-                    thebigarray[int(imagex), int(imagey)] = int(mapValue(downsampled_image[x,y], (0, 4500), (0x0, 0x7fff))) # Color
+                    thebigarray[int(imagex),     int(imagey)] = int(mapValue(modifier(downsampled_image[x, y]), (modifier(0), modifier(4500)), (0x0, 0x7fff)))
             except Exception:
                 print("!!!")
-                print(ascFile.data()[x*downscalefactor,y*downscalefactor])
-                print(downsampled_image[x,y])
+                print(ascFile.data[x*downscalefactor, y*downscalefactor])
+                print(downsampled_image[x, y])
                 print(index)
                 print("!!!")
                 raise
@@ -177,6 +206,17 @@ def process_files(inpaths: list, outpath: Path, downscalefactor=1, transparency_
         img = png.from_array(thebigarray.tolist(), mode="L;16")
     img.save(outpath)
 
+def run_for_profile():
+    isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
+    process_files(isere, Path("C:/Users/Antonin/AppData/Local/Temp/profile.png"), downscalefactor=4, transparency_on_empty=True)
+
+def profile():
+    import cProfile, pstats
+    statsFile = Path("C:/Users/Antonin/AppData/Local/Temp/profilestats.txt")
+    cProfile.run("run_for_profile()", str(statsFile))
+    p = pstats.Stats(str(statsFile))
+
+    return p
 
 
 if __name__ == "__main__":
@@ -191,6 +231,6 @@ if __name__ == "__main__":
     isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
     france = [Path("S:/Curiosités/IGN/BD ALTI - France") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - France"))]
 
-    process_files(chartreuse, Path("S:/Curiosités/IGN/chartreuse_transp_ds2.png"), downscalefactor=2)
+    #process_files(isere, Path("S:/Curiosités/IGN/isere_transp_ds4.png"), downscalefactor=4, transparency_on_empty=True)
 
     print("OK!")
