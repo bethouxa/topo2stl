@@ -195,20 +195,24 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
         img = png.from_array(thebigarray.tolist(), mode="L;16")
     img.save(outpath)
 
-def run_for_profile():
-    isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
-    process_files(isere, Path("C:/Users/Antonin/AppData/Local/Temp/profile.png"), downscalefactor=4, transparency_on_empty=True)
 
-def profile():
-    import cProfile, pstats
+def benchmark():
+    import cProfile
+    import pstats
     statsFile = Path("C:/Users/Antonin/AppData/Local/Temp/profilestats.txt")
-    cProfile.run("run_for_profile()", str(statsFile))
-    p = pstats.Stats(str(statsFile))
 
+    def benchmark_worker():
+        isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in
+                 os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
+        process_files(isere, Path("C:/Users/Antonin/AppData/Local/Temp/profile.png"), downscalefactor=4,
+                      transparency_on_empty=True)
+
+    cProfile.run("benchmark_worker()", str(statsFile))
+    p = pstats.Stats(str(statsFile))
     return p
 
 
-if __name__ == "__main__":
+def main():
     chartreuse = [
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6475_MNT_LAMB93_IGN69.asc"),
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6500_MNT_LAMB93_IGN69.asc"),
@@ -220,6 +224,14 @@ if __name__ == "__main__":
     isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
     france = [Path("S:/Curiosités/IGN/BD ALTI - France") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - France"))]
 
-    #process_files(isere, Path("S:/Curiosités/IGN/isere_transp_ds4.png"), downscalefactor=4, transparency_on_empty=True)
+    dsf: int = 4
+    transp: bool = True
+    name: str = "isere"
+    filename: Path = Path("S:/Curiosités/IGN/") / f"{name}_ds{dsf}_transp{transp}.png"
 
-    print("OK!")
+    process_files(isere, filename, dsf, transp)
+
+    print("OK! " + str(filename))
+
+if __name__ == "__main__":
+    main()
