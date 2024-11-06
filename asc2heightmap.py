@@ -13,9 +13,10 @@ from tqdm import tqdm
 import png
 from typing import Callable
 import itertools
+from datetime import datetime
 
 
-def mapValue(value, fromRange, toRange):
+def mapValue(value, fromRange: tuple, toRange: tuple):
     # Figure out how 'wide' each range is
     fromSpan = fromRange[0] - fromRange[1]
     toSpan = toRange[0] - toRange[1]
@@ -27,11 +28,11 @@ def mapValue(value, fromRange, toRange):
     return toRange[0] + (valueScaled * toSpan)
 
 
-def coordsToIndex(x, y, nCols) -> int:
+def coordsToIndex(x: int, y: int, nCols: int) -> int:
     return y * nCols + x
 
 
-def downscale(x, y, factor) -> tuple:
+def downscale(x: int, y: int, factor: int) -> tuple:
     return x*factor, y*factor
 
 
@@ -47,7 +48,7 @@ class ASCFile:
     _data: ndarray
     _filepath: Path
 
-    def __init__(self, path) -> None:
+    def __init__(self, path: Path) -> None:
         rowcount = 0
         self._filepath = path
         with open(path, 'r', encoding="utf8") as file:
@@ -75,7 +76,7 @@ class ASCFile:
             self.maxY = self.minY + (self.nRows * self.cellSize)
             self.size = (self.maxX-self.minX, self.maxY-self.minY)
 
-    def index2coord(self, index, scale=1) -> tuple:
+    def index2coord(self, index: int, scale: int = 1) -> tuple:
         return index % math.ceil(self.nCols/scale), index // math.ceil(self.nCols/scale)
 
     @staticmethod
@@ -127,7 +128,6 @@ class ASCFile:
             self._data = np.loadtxt(self._filepath, dtype=float, skiprows=7, encoding='utf-8')
             return self._data
 
-
     def coord2index(self, x, y) -> int:
         return x * self.nCols + y
 
@@ -154,38 +154,42 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
 
     assert nCols % downscalefactor == 0  # TODO: remove, good luck lmao
 
-    imageminX = min([f.minX for f in ascfiles])
-    imagemaxX = max([f.maxX for f in ascfiles])
-    imageminY = min([f.minY for f in ascfiles])
-    imagemaxY = max([f.maxY for f in ascfiles])
-    # imageminZ = min([f.minAltitude for f in ascfiles])
-    # imagemaxZ = max([f.maxAltitude for f in ascfiles])
+    image_min_X = min([f.minX for f in ascfiles])
+    image_max_X = max([f.maxX for f in ascfiles])
+    image_min_Y = min([f.minY for f in ascfiles])
+    image_max_Y = max([f.maxY for f in ascfiles])
+    #imageminZ = min([f.minZ for f in ascfiles])
+    #imagemaxZ = max([f.maxZ for f in ascfiles])
 
-    size_x = int(math.ceil((imagemaxX - imageminX) / cellSize / downscalefactor))
-    size_y = int(math.ceil((imagemaxY - imageminY) / cellSize / downscalefactor))
+    image_size_X = int(math.ceil((image_max_X - image_min_X) / cellSize / downscalefactor))
+    image_size_Y = int(math.ceil((image_max_Y - image_min_Y) / cellSize / downscalefactor))
 
     if transparency_on_empty:
-        thebigarray = np.zeros((size_x*2, size_y), dtype=np.int32)  # *2 because 2 channels. Default value of 0 = transparent unless worked on later
+        thebigarray = np.zeros((image_size_X*2, image_size_Y), dtype=np.int32)
+        # *2 for color channel +alpha channel. Default value of 0 = transparent unless worked on later
     else:
-        thebigarray = np.zeros((size_x, size_y), dtype=np.int32)
+        thebigarray = np.zeros((image_size_X, image_size_Y), dtype=np.int32)
+        # No alpha channel
 
-    for ascFile in tqdm(ascfiles, desc="Building image"):
-        downsampled_image = skimage.measure.block.block_reduce(ascFile.data, block_size=downscalefactor, func=numpy.mean)
-        for index in range(0, downsampled_image.size):
-            x, y = ascFile.index2coord(index, downscalefactor)
-            imagex = (x + ((ascFile.minX - imageminX) / cellSize) / downscalefactor)
-            imagey = (y + ((ascFile.minY - imageminY) / cellSize) / downscalefactor)
+    for chunk in tqdm(ascfiles, desc="Building image"):
+        # Downsample => for example, bring 1000x1000 image to 500x500 image
+        downsampled_chunk = skimage.measure.block.block_reduce(chunk.data, block_size=downscalefactor, func=numpy.mean)
+        for index in range(0, downsampled_chunk.size):
+            chunk_x, chunk_y = chunk.index2coord(index, downscalefactor)
+            # Compute the positions of the "current pixel" in the final image
+            image_x = (chunk_x + ((chunk.minX - image_min_X) / cellSize) / downscalefactor)
+            image_y = (chunk_y + ((chunk.minY - image_min_Y) / cellSize) / downscalefactor)
             try:
                 if transparency_on_empty:
-                    thebigarray[int(imagex*2),   int(imagey)] = int(mapValue(modifier(downsampled_image[x, y]), (modifier(0), modifier(4500)), (0x0, 0x7fff)))  # Color
-                    thebigarray[int(imagex*2+1), int(imagey)] = 0xffff  # Transparency
+                    thebigarray[int(image_x*2),   int(image_y)] = int(mapValue(modifier(downsampled_chunk[chunk_x, chunk_y]), (modifier(0), modifier(4500)), (0x0, 0x7fff)))  # Color
+                    thebigarray[int(image_x*2+1), int(image_y)] = 0xffff  # Transparency
                 else:
-                    thebigarray[int(imagex),     int(imagey)] = int(mapValue(modifier(downsampled_image[x, y]), (modifier(0), modifier(4500)), (0x0, 0x7fff)))
+                    thebigarray[int(image_x),     int(image_y)] = int(mapValue(modifier(downsampled_chunk[chunk_x, chunk_y]), (modifier(0), modifier(4500)), (0x0, 0x7fff)))
             except Exception:
                 print("!!!")
-                print(ascFile.data[x*downscalefactor, y*downscalefactor])
-                print(downsampled_image[x, y])
-                print(index)
+                print("ascfile data:      " + str(chunk.data[chunk_x*downscalefactor, chunk_y*downscalefactor]))
+                print("downsampled image: " + str(downsampled_chunk[chunk_x, chunk_y]))
+                print("index:             " + str(index))
                 print("!!!")
                 raise
     thebigarray = np.rot90(thebigarray)
@@ -196,17 +200,15 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
     img.save(outpath)
 
 
+def benchmark_worker():
+    isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
+    process_files(isere, Path("C:/Users/betho/AppData/Local/Temp/profile.png"), downscalefactor=4, transparency_on_empty=True)
+
+
 def benchmark():
     import cProfile
     import pstats
-    statsFile = Path("C:/Users/Antonin/AppData/Local/Temp/profilestats.txt")
-
-    def benchmark_worker():
-        isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in
-                 os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
-        process_files(isere, Path("C:/Users/Antonin/AppData/Local/Temp/profile.png"), downscalefactor=4,
-                      transparency_on_empty=True)
-
+    statsFile = Path("C:/Users/betho/AppData/Local/Temp/profilestats.txt")
     cProfile.run("benchmark_worker()", str(statsFile))
     p = pstats.Stats(str(statsFile))
     return p
@@ -224,14 +226,16 @@ def main():
     isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
     france = [Path("S:/Curiosités/IGN/BD ALTI - France") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - France"))]
 
-    dsf: int = 4
-    transp: bool = True
-    name: str = "isere"
-    filename: Path = Path("S:/Curiosités/IGN/") / f"{name}_ds{dsf}_transp{transp}.png"
+    dsf: int = 2
+    transp: bool = False
+    name: str = "isere2"
+    date = datetime.today().strftime('%Y-%m-%d')
+    filename: Path = Path("S:/Curiosités/IGN/") / f"{name}_ds{dsf}_transp{transp}_{date}.png"
 
     process_files(isere, filename, dsf, transp)
 
     print("OK! " + str(filename))
+
 
 if __name__ == "__main__":
     main()
