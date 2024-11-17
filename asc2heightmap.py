@@ -1,6 +1,7 @@
 import re
+from argparse import ArgumentParser
+from sys import argv
 
-import numpy
 import numpy as np
 from pathlib import Path
 
@@ -173,7 +174,7 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
 
     for chunk in tqdm(ascfiles, desc="Building image"):
         # Downsample => for example, bring 1000x1000 image to 500x500 image
-        downsampled_chunk = skimage.measure.block.block_reduce(chunk.data, block_size=downscalefactor, func=numpy.mean)
+        downsampled_chunk = skimage.measure.block.block_reduce(chunk.data, block_size=downscalefactor, func=np.mean)
         for index in range(0, downsampled_chunk.size):
             chunk_x, chunk_y = chunk.index2coord(index, downscalefactor)
             # Compute the positions of the "current pixel" in the final image
@@ -214,7 +215,8 @@ def benchmark():
     return p
 
 
-def main():
+def main(inpath: Path, outpath: Path = None, dsf: int = 1, transp: bool = True, modifier: Callable = lambda x:x):
+    
     chartreuse = [
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6475_MNT_LAMB93_IGN69.asc"),
         Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6500_MNT_LAMB93_IGN69.asc"),
@@ -226,16 +228,43 @@ def main():
     isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
     france = [Path("S:/Curiosités/IGN/BD ALTI - France") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - France"))]
 
-    dsf: int = 2
-    transp: bool = False
-    name: str = "isere2"
-    date = datetime.today().strftime('%Y-%m-%d')
-    filename: Path = Path("S:/Curiosités/IGN/") / f"{name}_ds{dsf}_transp{transp}_{date}.png"
+    if inpath.is_dir():
+        infiles = [files for files in os.listdir(inpath) if files.endswith('.asc')]
+    else:
+        infiles = inpath
 
-    process_files(isere, filename, dsf, transp)
+    if outpath:
+        assert outpath.parent.exists()
+        if outpath.is_dir():
+            date = datetime.today().strftime('%Y-%m-%d')
+            fname = f"{inpath.name}_ds{dsf}_trans{transp}_{date}.png"
+            outfile = outpath/fname
+        else:
+            outfile = outpath
 
-    print("OK! " + str(filename))
+    process_files(infiles, outfile, dsf, transp, modifier)
+
+    print("OK! " + str(outfile))
 
 
 if __name__ == "__main__":
-    main()
+    argparser = ArgumentParser(
+        prog="Topo2STL",
+        description="Converts IGN BDALTI maps to greyscale heightmaps"
+    )
+    argparser.add_argument('input_path', type=Path)
+    argparser.add_argument('-o', '--output', type=Path)
+    argparser.add_argument('-d','--downscale-factor', default=1, type=int)
+    argparser.add_argument('-m','--modifier',type=callable, default=lambda x: x) # Default = identity function
+    argparser.add_argument('-t','--transparent', action='store_true')
+    args = argparser.parse_args()
+    #debug: args: dict = vars(argparser.parse_args(argv))
+
+
+    main(
+        inpath=args.input_path,
+        outpath=args.output,
+        dsf=args.downscale_factor,
+        modifier=args.modifier,
+        transp=args.transparent
+        )
