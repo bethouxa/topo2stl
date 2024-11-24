@@ -1,6 +1,7 @@
+
+import random
 import re
 from argparse import ArgumentParser
-from sys import argv
 
 import numpy as np
 from pathlib import Path
@@ -169,7 +170,9 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
                 print("index:             " + str(index))
                 print("!!!")
                 raise
+
         chunk.free_data()
+
     if transparency_on_empty:
         img = png.from_array(thebigarray.tolist(), mode="LA;16")
     else:
@@ -178,64 +181,62 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
 
 
 def benchmark_worker():
-    isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
-    process_files(isere, Path("C:/Users/betho/AppData/Local/Temp/profile.png"), downscalefactor=4, transparency_on_empty=True)
+    from sys import argv
+    inpath = Path(argv[1])
+    infiles = [inpath/files for files in os.listdir(inpath) if files.endswith('.asc')]
+    outfile = inpath/f'benchmark_{datetime.today().strftime("%A-%H%M%S")}.png'
+    process_files(infiles, outfile, downscalefactor=2, transparency_on_empty=True, modifier=math.sqrt)
 
 
 def benchmark():
-    import cProfile
-    import pstats
-    statsFile = Path("C:/Users/betho/AppData/Local/Temp/profilestats.txt")
-    cProfile.run("benchmark_worker()", str(statsFile))
-    p = pstats.Stats(str(statsFile))
-    return p
+    from cProfile import run
+    from pstats import Stats
+    from sys import argv
+    statsFile = Path(argv[1])/f'profilestats-{datetime.today().strftime("%A-%H%M%S")}.cprofilestats'
+    run("benchmark_worker()", str(statsFile))
+    Stats(str(statsFile)).strip_dirs().sort_stats('cumtime').reverse_order().print_stats()
+    print(str(statsFile))
 
 
-def main(inpath: Path, outpath: Path = None, dsf: int = 1, transp: bool = True, modifier: Callable = lambda x:x):
-    
-    chartreuse = [
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6475_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6500_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6475_MNT_LAMB93_IGN69.asc"),
-        Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0900_6500_MNT_LAMB93_IGN69.asc"),
-    ]
-
-    oneimg = [Path("S:/Curiosités/IGN/BD ALTI - 38/BDALTIV2_25M_FXX_0925_6475_MNT_LAMB93_IGN69.asc")]
-    isere = [Path("S:/Curiosités/IGN/BD ALTI - 38") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - 38"))]
-    france = [Path("S:/Curiosités/IGN/BD ALTI - France") / Path(filename) for filename in os.listdir(Path("S:/Curiosités/IGN/BD ALTI - France"))]
+def main(inpath: Path, outpath: Path = None, dsf: int = 1, transp: bool = True, modifier: Callable = lambda x: x):
 
     if inpath.is_dir():
-        infiles = [files for files in os.listdir(inpath) if files.endswith('.asc')]
+        infiles = [inpath/files for files in os.listdir(inpath) if files.endswith('.asc')]
     else:
         infiles = inpath
 
-    if outpath:
+    date = datetime.today().strftime('%Y-%m-%d')
+    fname = f"{inpath.name}_ds{dsf}_trans{transp}_{date}_{random.randint(1,10000)}.png"
+    if outpath and not outpath.is_dir():
         assert outpath.parent.exists()
-        if outpath.is_dir():
-            date = datetime.today().strftime('%Y-%m-%d')
-            fname = f"{inpath.name}_ds{dsf}_trans{transp}_{date}.png"
-            outfile = outpath/fname
+        outfile = outpath
+    elif outpath and outpath.is_dir():
+        assert outpath.parent.exists()
+        outfile = outpath/fname
+    else:
+        if inpath.is_dir():
+            outfile = inpath/fname
         else:
-            outfile = outpath
+            outfile = inpath.parent/fname
 
     process_files(infiles, outfile, dsf, transp, modifier)
 
-    print("OK! " + str(outfile))
+    print("Done!")
+    print(str(outfile))
 
 
 if __name__ == "__main__":
-    argparser = ArgumentParser(
-        prog="Topo2STL",
-        description="Converts IGN BDALTI maps to greyscale heightmaps"
-    )
-    argparser.add_argument('input_path', type=Path)
-    argparser.add_argument('-o', '--output', type=Path)
-    argparser.add_argument('-d','--downscale-factor', default=1, type=int)
-    argparser.add_argument('-m','--modifier',type=callable, default=lambda x: x) # Default = identity function
-    argparser.add_argument('-t','--transparent', action='store_true')
-    args = argparser.parse_args()
-    #debug: args: dict = vars(argparser.parse_args(argv))
 
+    argparser = ArgumentParser(
+        prog="MNT2Heightmap",
+        description="Converts IGN BDALTI MNT maps (aka RGEALTI) to 16-bit greyscale heightmaps"
+    )
+    argparser.add_argument('input_path', type=Path, help="Directory or file to process")
+    argparser.add_argument('-o', '--output', type=Path, help="Output directory or file (name will be autogenerated)")
+    argparser.add_argument('-d', '--downscale-factor', default=1, type=int, help="Downscale factor: by how much the image will be shrunk in the X/Y axis")
+    argparser.add_argument('-m', '--modifier', type=callable, default=lambda x: x, help="Python function that will be applied to height values. Math and numpy (as np) packages are supported")  # Default = identity function
+    argparser.add_argument('-t', '--transparent', action='store_true', help="Enable transparency for missing data in the final image, otherwise missing data will appear as height = 0")
+    args = argparser.parse_args()
 
     main(
         inpath=args.input_path,
