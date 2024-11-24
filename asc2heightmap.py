@@ -146,6 +146,8 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
     for chunk in tqdm(ascfiles, desc="Building image"):
         # Downsample => for example, bring 1000x1000 image to 500x500 image
         downsampled_chunk = skimage.measure.block.block_reduce(chunk.data, block_size=downscalefactor, func=np.mean)
+        downsampled_chunk = np.rot90(downsampled_chunk, k=3)
+
         for index in range(0, downsampled_chunk.size):
             chunk_x, chunk_y = chunk.index2coord(index, downscalefactor)
             # Compute the positions of the "current pixel" in the final image
@@ -157,6 +159,7 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
                 if transparency_on_empty:
                     thebigarray[int(image_x*2),   int(image_y)] = pixelColor  # Color
                     thebigarray[int(image_x*2+1), int(image_y)] = 0xffff  # Transparency FIXME: fucks with the rot90 thing
+                    thebigarray[int(image_x*2+1), int(image_y)] = 0xffff  # Transparency
                 else:
                     thebigarray[int(image_x),     int(image_y)] = pixelColor
             except Exception:
@@ -166,7 +169,6 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
                 print("index:             " + str(index))
                 print("!!!")
                 raise
-    thebigarray = np.rot90(thebigarray)
         chunk.free_data()
     if transparency_on_empty:
         img = png.from_array(thebigarray.tolist(), mode="LA;16")
