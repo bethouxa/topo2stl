@@ -80,46 +80,13 @@ class ASCFile:
     def index2coord(self, index: int, scale: int = 1) -> tuple:
         return index % math.ceil(self.nCols/scale), index // math.ceil(self.nCols/scale)
 
-    @staticmethod
-    def map_value_to_int8_color_value(map_value) -> int:
-        _maxColorValue = 0xff
-        _maxMapValue = 4100
-        mapvalue_relative_to_max = map_value / _maxMapValue
-        mapped_value = _maxColorValue * mapvalue_relative_to_max
-        return round(mapped_value)
-
-    @staticmethod
-    def map_value_to_fmode_color_value(map_value) -> float:
-        _maxColorValue = 0x7FFFFFFF
-        _maxMapValue = 4100
-        mapvalue_relative_to_max = map_value / _maxMapValue
-        mapped_value = float(_maxColorValue * mapvalue_relative_to_max)
-        return mapped_value
-
-    def get_altitude(self, x, y) -> float:
-        return self.data()[x][y]
-
     @property
     def minAltitude(self) -> float:
-        try:
-            return self._minAltitude
-        except AttributeError:
-            with open(self._filepath, 'r', encoding="utf8") as file:
-                for line in itertools.islice(file, 7, None):
-                    m = float(np.min([self.minAltitude]+[float(digit) for digit in line.split()]))
-            self._minAltitude = m
-            return self._minAltitude
+        return self.data.min()
 
     @property
     def maxAltitude(self) -> float:  # Lazyload
-        try:
-            return self._minAltitude
-        except AttributeError:
-            with open(self._filepath, 'r', encoding="utf8") as file:
-                for line in itertools.islice(file, 7, None):
-                    m = float(np.min([self.minAltitude]+[float(digit) for digit in line.split()]))
-            self._minAltitude = m
-            return self._minAltitude
+        return self.data.max()
 
     @property
     def data(self) -> ndarray:
@@ -131,6 +98,9 @@ class ASCFile:
 
     def coord2index(self, x, y) -> int:
         return x * self.nCols + y
+
+    def free_data(self) -> None:
+        del self._data
 
 
 def load_ascfiles(inpaths: list):
@@ -159,8 +129,9 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
     image_max_X = max([f.maxX for f in ascfiles])
     image_min_Y = min([f.minY for f in ascfiles])
     image_max_Y = max([f.maxY for f in ascfiles])
-    #imageminZ = min([f.minZ for f in ascfiles])
-    #imagemaxZ = max([f.maxZ for f in ascfiles])
+
+    interp_source = (modifier(0), modifier(4500))  # Max value of Z for a french map
+    interp_target = (0, 0xffff)  # Max pixel color for given png mode (16 bits greyscale)
 
     image_size_X = int(math.ceil((image_max_X - image_min_X) / cellSize / downscalefactor))
     image_size_Y = int(math.ceil((image_max_Y - image_min_Y) / cellSize / downscalefactor))
@@ -181,11 +152,13 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
             image_x = (chunk_x + ((chunk.minX - image_min_X) / cellSize) / downscalefactor)
             image_y = (chunk_y + ((chunk.minY - image_min_Y) / cellSize) / downscalefactor)
             try:
+                pixelColor = int(mapValue(modifier(downsampled_chunk[chunk_x, chunk_y]), interp_source, interp_target))
+
                 if transparency_on_empty:
-                    thebigarray[int(image_x*2),   int(image_y)] = int(mapValue(modifier(downsampled_chunk[chunk_x, chunk_y]), (modifier(0), modifier(4500)), (0x0, 0x7fff)))  # Color
-                    thebigarray[int(image_x*2+1), int(image_y)] = 0xffff  # Transparency
+                    thebigarray[int(image_x*2),   int(image_y)] = pixelColor  # Color
+                    thebigarray[int(image_x*2+1), int(image_y)] = 0xffff  # Transparency FIXME: fucks with the rot90 thing
                 else:
-                    thebigarray[int(image_x),     int(image_y)] = int(mapValue(modifier(downsampled_chunk[chunk_x, chunk_y]), (modifier(0), modifier(4500)), (0x0, 0x7fff)))
+                    thebigarray[int(image_x),     int(image_y)] = pixelColor
             except Exception:
                 print("!!!")
                 print("ascfile data:      " + str(chunk.data[chunk_x*downscalefactor, chunk_y*downscalefactor]))
@@ -194,6 +167,7 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
                 print("!!!")
                 raise
     thebigarray = np.rot90(thebigarray)
+        chunk.free_data()
     if transparency_on_empty:
         img = png.from_array(thebigarray.tolist(), mode="LA;16")
     else:
