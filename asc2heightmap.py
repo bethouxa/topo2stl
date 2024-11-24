@@ -1,3 +1,5 @@
+#!/bin/python3
+# -*- coding: utf-8 -*-
 
 import random
 import re
@@ -111,7 +113,7 @@ def load_ascfiles(inpaths: list):
     return ascfiles
 
 
-def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = None, relativeAltitude=False) -> None:
+def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = None) -> None:
     if modifier is None:
         def modifier(value): return value
 
@@ -139,17 +141,17 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
 
     if transparency_on_empty:
         thebigarray = np.zeros((image_size_X*2, image_size_Y), dtype=np.int32)
-        # *2 for color channel +alpha channel. Default value of 0 = transparent unless worked on later
+        # *2 for color channel + alpha channel. Default value of 0 = transparent unless worked on later
     else:
         thebigarray = np.zeros((image_size_X, image_size_Y), dtype=np.int32)
         # No alpha channel
 
-    for chunk in tqdm(ascfiles, desc="Building image"):
+    for chunk in tqdm(ascfiles, desc="Processing file..."):
         # Downsample => for example, bring 1000x1000 image to 500x500 image
         downsampled_chunk = skimage.measure.block.block_reduce(chunk.data, block_size=downscalefactor, func=np.mean)
         downsampled_chunk = np.rot90(downsampled_chunk, k=3)
 
-        for index in range(0, downsampled_chunk.size):
+        for index in tqdm(range(0, downsampled_chunk.size), desc="Processing pixel..."):
             chunk_x, chunk_y = chunk.index2coord(index, downscalefactor)
             # Compute the positions of the "current pixel" in the final image
             image_x = (chunk_x + ((chunk.minX - image_min_X) / cellSize) / downscalefactor)
@@ -159,7 +161,6 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
 
                 if transparency_on_empty:
                     thebigarray[int(image_x*2),   int(image_y)] = pixelColor  # Color
-                    thebigarray[int(image_x*2+1), int(image_y)] = 0xffff  # Transparency FIXME: fucks with the rot90 thing
                     thebigarray[int(image_x*2+1), int(image_y)] = 0xffff  # Transparency
                 else:
                     thebigarray[int(image_x),     int(image_y)] = pixelColor
