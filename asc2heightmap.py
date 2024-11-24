@@ -126,7 +126,7 @@ class ASCFile:
         try:
             return self._data
         except AttributeError:
-            self._data = np.loadtxt(self._filepath, dtype=float, skiprows=7, encoding='utf-8')
+            self._data = np.loadtxt(self._filepath, dtype=float, skiprows=6, encoding='utf-8')
             return self._data
 
     def coord2index(self, x, y) -> int:
