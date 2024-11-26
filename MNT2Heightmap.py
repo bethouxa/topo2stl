@@ -151,26 +151,18 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
         downsampled_chunk = skimage.measure.block.block_reduce(chunk.data, block_size=downscalefactor, func=np.mean)
         downsampled_chunk = np.rot90(downsampled_chunk, k=3)
 
-        for index in tqdm(range(0, downsampled_chunk.size), desc="Processing pixel..."):
+        for index in range(0, downsampled_chunk.size):
             chunk_x, chunk_y = chunk.index2coord(index, downscalefactor)
             # Compute the positions of the "current pixel" in the final image
             image_x = (chunk_x + ((chunk.minX - image_min_X) / cellSize) / downscalefactor)
             image_y = (chunk_y + ((chunk.minY - image_min_Y) / cellSize) / downscalefactor)
-            try:
-                pixelColor = int(mapValue(modifier(downsampled_chunk[chunk_x, chunk_y]), interp_source, interp_target))
+            pixelColor = int(mapValue(modifier(downsampled_chunk[chunk_x, chunk_y]), interp_source, interp_target))
 
-                if transparency_on_empty:
-                    thebigarray[int(image_x*2),   int(image_y)] = pixelColor  # Color
-                    thebigarray[int(image_x*2+1), int(image_y)] = 0xffff  # Transparency
-                else:
-                    thebigarray[int(image_x),     int(image_y)] = pixelColor
-            except Exception:
-                print("!!!")
-                print("ascfile data:      " + str(chunk.data[chunk_x*downscalefactor, chunk_y*downscalefactor]))
-                print("downsampled image: " + str(downsampled_chunk[chunk_x, chunk_y]))
-                print("index:             " + str(index))
-                print("!!!")
-                raise
+            if transparency_on_empty:
+                thebigarray[int(image_x*2),   int(image_y)] = pixelColor  # Color
+                thebigarray[int(image_x*2+1), int(image_y)] = 0xffff  # Transparency
+            else:
+                thebigarray[int(image_x),     int(image_y)] = pixelColor
 
         chunk.free_data()
 
