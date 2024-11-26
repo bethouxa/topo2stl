@@ -196,7 +196,7 @@ def main(inpath: Path, outpath: Path = None, dsf: int = 1, transp: bool = True, 
     if inpath.is_dir():
         infiles = [inpath/files for files in os.listdir(inpath) if files.endswith('.asc')]
     else:
-        infiles = inpath
+        infiles = [inpath]
 
     date = datetime.today().strftime('%Y-%m-%d')
     fname = f"{inpath.name}_ds{dsf}_trans{transp}_{date}_{random.randint(1,10000)}.png"
