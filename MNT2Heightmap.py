@@ -4,6 +4,7 @@
 import random
 import re
 from argparse import ArgumentParser
+import concurrent.futures
 
 import numpy as np
 from pathlib import Path
@@ -113,6 +114,73 @@ def load_ascfiles(inpaths: list):
     return ascfiles
 
 
+def process_files_mt(inpaths: list, outpath: Path, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = None) -> None:
+    ascfiles = load_ascfiles(inpaths)
+
+    assert all([asc.cellSize == ascfiles[0].cellSize for asc in ascfiles])  # Check that cellsize is uniform across all files
+    cellSize = ascfiles[0].cellSize
+    assert all([asc.nCols == ascfiles[0].nCols for asc in ascfiles])  # Check that nCols is uniform across all files
+    nCols = ascfiles[0].nCols
+    assert all([asc.nRows == ascfiles[0].nRows for asc in ascfiles])  # Check that nRows is uniform across all files
+    nRows = ascfiles[0].nRows
+
+    assert nCols % downscalefactor == 0  # TODO: remove, good luck lmao
+
+    image_min_X = min([f.minX for f in ascfiles])
+    image_max_X = max([f.maxX for f in ascfiles])
+    image_min_Y = min([f.minY for f in ascfiles])
+    image_max_Y = max([f.maxY for f in ascfiles])
+
+    interp_source = (modifier(0), modifier(4900))  # Max value of Z for a french map (peak=~4810 m)
+    interp_target = (0, 0xffff)  # Max pixel color for given png mode (16 bits greyscale)
+
+    image_size_X = int(math.ceil((image_max_X - image_min_X) / cellSize / downscalefactor))
+    image_size_Y = int(math.ceil((image_max_Y - image_min_Y) / cellSize / downscalefactor))
+
+    if transparency_on_empty:
+        thebigarray = np.zeros((image_size_X * 2, image_size_Y), dtype=np.int32)
+        # *2 for color channel + alpha channel. Default value of 0 = transparent unless worked on later
+    else:
+        thebigarray = np.zeros((image_size_X, image_size_Y), dtype=np.int32)
+        # No alpha channel
+
+    def _process_files_mt_worker(worker_chunk: ASCFile):
+        # Downsample => for example, bring 1000x1000 image to 500x500 image
+        nonlocal thebigarray, downscalefactor, transparency_on_empty, modifier
+        downsampled_chunk = skimage.measure.block.block_reduce(worker_chunk.data, block_size=downscalefactor, func=np.mean)
+        downsampled_chunk = np.rot90(downsampled_chunk, k=3)
+
+        for index in range(0, downsampled_chunk.size):
+            chunk_x, chunk_y = worker_chunk.index2coord(index, downscalefactor)
+            # Compute the positions of the "current pixel" in the final image
+            image_x = (chunk_x + ((worker_chunk.minX - image_min_X) / cellSize) / downscalefactor)
+            image_y = (chunk_y + ((worker_chunk.minY - image_min_Y) / cellSize) / downscalefactor)
+
+            pixelColor = int(mapValue(modifier(downsampled_chunk[chunk_x, chunk_y]), interp_source, interp_target))
+
+            if transparency_on_empty:
+                thebigarray[int(image_x * 2), int(image_y)] = pixelColor  # Color
+                thebigarray[int(image_x * 2 + 1), int(image_y)] = 0xffff  # Transparency
+            else:
+                thebigarray[int(image_x), int(image_y)] = pixelColor
+
+        chunk.free_data()
+    # end worker func
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as tpe:
+        futs = []
+        for chunk in ascfiles:
+            futs.append(tpe.submit(_process_files_mt_worker, chunk))
+        for _ in tqdm(concurrent.futures.as_completed(futs), total=len(futs), desc="Processing files"):
+            pass
+
+    if transparency_on_empty:
+        img = png.from_array(thebigarray.tolist(), mode="LA;16")
+    else:
+        img = png.from_array(thebigarray.tolist(), mode="L;16")
+    img.save(outpath)
+
+
 def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = None) -> None:
     if modifier is None:
         def modifier(value): return value
@@ -199,7 +267,7 @@ def main(inpath: Path, outpath: Path = None, dsf: int = 1, transp: bool = True, 
         infiles = [inpath]
 
     date = datetime.today().strftime('%Y-%m-%d')
-    fname = f"{inpath.name}_ds{dsf}_trans{transp}_{date}_{random.randint(1,10000)}.png"
+    fname = f"{inpath.name}_mt_ds{dsf}_trans{transp}_{date}_{random.randint(1,10000)}.png"
     if outpath and not outpath.is_dir():
         assert outpath.parent.exists()
         outfile = outpath
