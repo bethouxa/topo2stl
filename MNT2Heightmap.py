@@ -20,16 +20,19 @@ import itertools
 from datetime import datetime
 
 
-def mapValue(value, fromRange: tuple, toRange: tuple):
-    # Figure out how 'wide' each range is
-    fromSpan = fromRange[0] - fromRange[1]
-    toSpan = toRange[0] - toRange[1]
+def mapValue(value: float, fromRange: tuple, toRange: tuple) -> float:
+    # Correct span calculations
+    from_min, from_max = fromRange
+    to_min, to_max = toRange
+    
+    fromSpan = from_max - from_min
+    toSpan = to_max - to_min
 
-    # Convert the left range into a 0-1 range (float)
-    valueScaled = float(value - fromRange[0]) / float(fromSpan)
+    # Calculate scale factor only once
+    scale = toSpan / fromSpan
 
-    # Convert the 0-1 range into a value in the right range.
-    return toRange[0] + (valueScaled * toSpan)
+    # Single expression for conversion
+    return (value - from_min) * scale + to_min
 
 
 def coordsToIndex(x: int, y: int, nCols: int) -> int:
@@ -93,12 +96,16 @@ class ASCFile:
 
     @property
     def data(self) -> ndarray:
-        try:
-            return self._data
-        except AttributeError:
-            self._data = np.loadtxt(self._filepath, dtype=float, skiprows=6, encoding='utf-8')
-            return self._data
-
+        if not hasattr(self, '_data'):
+            # Load data only when accessed first time
+            self._data = np.loadtxt(
+                self._filepath,
+                dtype=float,
+                skiprows=6,
+                encoding='utf-8'
+            )
+        return self._data
+    
     def coord2index(self, x, y) -> int:
         return x * self.nCols + y
 
@@ -170,18 +177,23 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
         # the user-defined modifier and the mapValue function. For most practical purposes,
         # this will still be significantly faster than processing each pixel individually.
 
-        for index in range(0, mapped_chunk.size):
-            chunk_x, chunk_y = chunk.index2coord(index, downscalefactor)
-            # Compute the positions of the "current pixel" in the final image
-            image_x = (chunk_x + ((chunk.minX - image_min_X) / cellSize) / downscalefactor)
-            image_y = (chunk_y + ((chunk.minY - image_min_Y) / cellSize) / downscalefactor)
-            pixelColor = mapped_chunk[chunk_x, chunk_y]
-            if transparency_on_empty:
-                thebigarray[int(image_x*2),   int(image_y)] = pixelColor  # Color
-                thebigarray[int(image_x*2+1), int(image_y)] = 0xffff  # Transparency
-            else:
-                thebigarray[int(image_x),     int(image_y)] = pixelColor
+        # Calculate offset positions
+        offset_x = int((chunk.minX - image_min_X) / cellSize / downscalefactor)
+        offset_y = int((chunk.minY - image_min_Y) / cellSize / downscalefactor)
 
+        # Define target slice
+        target_slice_x = slice(offset_x * 2 if transparency_on_empty else offset_x,
+                               (offset_x + mapped_chunk.shape[0]) * 2 if transparency_on_empty else offset_x + mapped_chunk.shape[0])
+        target_slice_y = slice(offset_y, offset_y + mapped_chunk.shape[1])
+
+        # Assign values using numpy slicing
+        if transparency_on_empty:
+            thebigarray[target_slice_x:target_slice_x+1:2, target_slice_y] = mapped_chunk  # Color channel
+            thebigarray[target_slice_x+1:target_slice_x+2:2, target_slice_y] = 0xffff      # Alpha channel
+        else:
+            thebigarray[target_slice_x, target_slice_y] = mapped_chunk
+
+        # Free memory
         chunk.free_data()
 
     if transparency_on_empty:
