@@ -122,8 +122,10 @@ class ASCFile:
 
 
 
-def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = lambda x: x, mark_edges: bool = False) -> None:
+def process_files(inpaths: list, outpath: Path, max_alti: int, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = lambda x: x, mark_edges: bool = False) -> None:
     """Main processing step. Takes a list of file paths, stitches them together and converts them into a single, 16-bit per color, grayscale PNG heightmap"""
+
+    white_value = 0xffff  # Magic constant equal to white value for the image mode used (here L;16 -> 16 bits -> 0xffff)
 
     ascfiles = [ASCFile(inpath) for inpath in tqdm(inpaths, desc="Reading ASC files")]
 
@@ -142,8 +144,8 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
     image_min_Y = min([f.minY for f in ascfiles])
     image_max_Y = max([f.maxY for f in ascfiles])
 
-    interp_source = (modifier(0), modifier(4500))  # Max value of Z for a french map
-    interp_target = (0, 0xffff)  # Max pixel color for given png mode (16 bits greyscale)
+    interp_source = (modifier(0), modifier(max_alti))  # Max value of Z for a french map
+    interp_target = (0, white_value)  # Max pixel color for given png mode (16 bits greyscale)
 
     image_size_X = int(math.ceil((image_max_X - image_min_X) / cellSize / downscalefactor))
     image_size_Y = int(math.ceil((image_max_Y - image_min_Y) / cellSize / downscalefactor))
@@ -158,15 +160,19 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
 
     for chunk in tqdm(ascfiles, desc="Processing file..."):
         # Downsample => for example, bring 1000x1000 image to 500x500 image
-        downsampled_chunk = skimage.measure.block.block_reduce(chunk.data, block_size=downscalefactor, func=np.mean)
-        downsampled_chunk = np.rot90(downsampled_chunk, k=3)
+        chunk_data = skimage.measure.block.block_reduce(chunk.data, block_size=downscalefactor, func=np.mean)
+        # Our final image is north up, but the chunks are west-up, fix that
+        chunk_data = np.rot90(chunk_data, k=3)
 
-        for index in range(0, downsampled_chunk.size):
+        for index in range(0, chunk_data.size):
             chunk_x, chunk_y = chunk.index2coord(index, downscalefactor)
             # Compute the positions of the "current pixel" in the final image
             image_x = (chunk_x + ((chunk.minX - image_min_X) / cellSize) / downscalefactor)
             image_y = (chunk_y + ((chunk.minY - image_min_Y) / cellSize) / downscalefactor)
-            pixelColor = int(mapValue(modifier(downsampled_chunk[chunk_x, chunk_y]), interp_source, interp_target))
+            if mark_edges and (chunk_x == 0 or chunk_y == 0 or chunk_x == chunk.nRows-1 or chunk_y == chunk.nCols-1):
+                pixelColor = white_value
+            else:
+                pixelColor = int(mapValue(modifier(chunk_data[chunk_x, chunk_y]), interp_source, interp_target))
 
             if transparency_on_empty:
                 thebigarray[int(image_x*2),   int(image_y)] = pixelColor  # Color
@@ -257,6 +263,12 @@ if __name__ == "__main__":
     )
     argparser.add_argument('-t', '--transparent', action='store_true', help=
         "Enable transparency on missing data. Warning: will double output image size."
+    )
+    argparser.add_argument('-a', '--max-altitude', default=4500, type=int, help=
+        "Forces a maximum altitude for the purposes of scaling the image"
+    )
+    argparser.add_argument('-e', '--mark-edges', action='store_true', help=
+        "Mark the edges of individual input files"
     )
     args = argparser.parse_args()
 
