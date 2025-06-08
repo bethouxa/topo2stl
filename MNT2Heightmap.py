@@ -120,6 +120,12 @@ class ASCFile:
     def free_data(self) -> None:
         del self._data
 
+    def simple_image(self, outpath, dsf: int, maxAlt: int = None):
+        if maxAlt is None:
+            maxAlt = self.maxAltitude
+        imagedata_raw: ndarray = skimage.measure.block.block_reduce(self.data, block_size=dsf, func=np.mean).astype(np.int32)
+        imagedata_interpd: ndarray = np.array([mapValue(imagedata_raw[i], (0,maxAlt),(0,0xffff)) for i in range(0,imagedata_raw.size)]).astype(np.int32)
+        png.from_array(imagedata_interpd.tolist(), mode="L;16").save(outpath)
 
 
 def process_files(inpaths: list, outpath: Path, max_alti: int, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = lambda x: x, mark_edges: bool = False) -> None:
@@ -285,5 +291,7 @@ if __name__ == "__main__":
         outpath=outpath,
         downscalefactor=args.downscale_factor,
         modifier=func_map[args.modifier],
-        transparency_on_empty=args.transparent
+        transparency_on_empty=args.transparent,
+        max_alti=args.max_altitude,
+        mark_edges=args.mark_edges
     )
