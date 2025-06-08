@@ -1,7 +1,6 @@
 #!/bin/python3
 # -*- coding: utf-8 -*-
 
-import random
 import re
 from argparse import ArgumentParser
 
@@ -20,7 +19,7 @@ import itertools
 from datetime import datetime
 
 
-def mapValue(value, fromRange: tuple, toRange: tuple):
+def mapValue(value, fromRange: tuple, toRange: tuple) -> float:
     # Figure out how 'wide' each range is
     fromSpan = fromRange[0] - fromRange[1]
     toSpan = toRange[0] - toRange[1]
@@ -46,7 +45,7 @@ class ASCFile:
     minX: float
     minY: float
     rowcount: int
-    cellsize: float
+    cellSize: float
     minAltitude: float
     maxAltitude: float
     _data: ndarray
@@ -80,6 +79,22 @@ class ASCFile:
             self.maxY = self.minY + (self.nRows * self.cellSize)
             self.size = (self.maxX-self.minX, self.maxY-self.minY)
 
+    def __str__(self) -> str:
+        try:
+            self._data
+        except AttributeError:
+            return f"ASCFile {self.name}, X {self.minX}-{self.maxX}, Y {self.minY}-{self.maxY}, unloaded"
+        else:
+            return f"ASCFile {self.name}, X {self.minX}-{self.maxX}, Y {self.minY}-{self.maxY}, Z {self.minAltitude}-{self.maxAltitude}"
+
+    def __repr__(self) -> str:
+        try:
+            self._data
+        except AttributeError:
+            return f"ASCFile object {str(self._filepath)=}, data loaded: no, {self.nRows=}, {self.nCols=}, {self.cellSize=}, {self.minX=} {self.maxX=}, {self.minY=} {self.maxY=}"
+        else:
+            return f"ASCFile object {str(self._filepath)=}, data loaded: yes, {self.nRows=}, {self.nCols=}, {self.cellSize=}, {self.minX=} {self.maxX=}, {self.minY=} {self.maxY=}, {self.minAltitude=} {self.maxAltitude=}"
+
     def index2coord(self, index: int, scale: int = 1) -> tuple:
         return index % math.ceil(self.nCols/scale), index // math.ceil(self.nCols/scale)
 
@@ -106,19 +121,13 @@ class ASCFile:
         del self._data
 
 
-def load_ascfiles(inpaths: list):
-    ascfiles = []
-    for inpath in tqdm(inpaths, desc="Reading ASC files"):
-        ascfiles.append(ASCFile(inpath))
-    return ascfiles
 
+def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = lambda x: x, mark_edges: bool = False) -> None:
+    """Main processing step. Takes a list of file paths, stitches them together and converts them into a single, 16-bit per color, grayscale PNG heightmap"""
 
-def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = None) -> None:
-    if modifier is None:
-        def modifier(value): return value
+    ascfiles = [ASCFile(inpath) for inpath in tqdm(inpaths, desc="Reading ASC files")]
 
-    ascfiles = load_ascfiles(inpaths)
-
+    # Check some arbitrary stuff that makes our life a lot easier
     assert all([asc.cellSize == ascfiles[0].cellSize for asc in ascfiles])  # Check that cellsize is uniform across all files
     cellSize = ascfiles[0].cellSize
     assert all([asc.nCols == ascfiles[0].nCols for asc in ascfiles])  # Check that nCols is uniform across all files
@@ -139,6 +148,7 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
     image_size_X = int(math.ceil((image_max_X - image_min_X) / cellSize / downscalefactor))
     image_size_Y = int(math.ceil((image_max_Y - image_min_Y) / cellSize / downscalefactor))
 
+    # Allocate the array used to house the final image
     if transparency_on_empty:
         thebigarray = np.zeros((image_size_X*2, image_size_Y), dtype=np.int32)
         # *2 for color channel + alpha channel. Default value of 0 = transparent unless worked on later
@@ -172,11 +182,9 @@ def process_files(inpaths: list, outpath: Path, downscalefactor: int = 1, transp
         img = png.from_array(thebigarray.tolist(), mode="L;16")
     img.save(outpath)
 
-    print("Done!")
-    print(str(outpath))
-
 
 def benchmark_worker():
+    """Runs a job with predetermined parameters for benchmarking purposes"""
     from sys import argv
     inpath = Path(argv[1])
     infiles = [inpath/files for files in os.listdir(inpath) if files.endswith('.asc')]
@@ -185,6 +193,7 @@ def benchmark_worker():
 
 
 def benchmark():
+    """Runs a pre-determined benchmark worker and displays stats"""
     from cProfile import run
     from pstats import Stats
     from sys import argv
@@ -195,6 +204,8 @@ def benchmark():
 
 
 def _make_paths(inpath: Path, outpath: Path = None, dsf: int = 1, transp: bool = True, modifier: Callable = lambda x: x):
+    """Takes "human-supplied" paths and turns them into a list of actual input files, allows the user to specify
+    directories and this function will figure out the input file list (for inputs) and output file names (for outputs)."""
 
     if inpath.is_dir():
         infiles = [inpath/files for files in os.listdir(inpath) if files.endswith('.asc')]
@@ -215,11 +226,8 @@ def _make_paths(inpath: Path, outpath: Path = None, dsf: int = 1, transp: bool =
         else:
             outfile = inpath.parent/fname
 
-    return (infiles, outfile)
+    return infiles, outfile
 
-
-def pow2(base: float):
-    return base**2
 
 if __name__ == "__main__":
 
@@ -227,14 +235,14 @@ if __name__ == "__main__":
         "sqrt": math.sqrt,
         "log2": math.log2,
         "log10": math.log10,
-        "sqre": pow2,
+        "sqre": lambda x: x**2,
         "raw": lambda x: x
     }
 
     argparser = ArgumentParser(
         prog="MNT2Heightmap",
         description="Converts IGN BDALTI MNT maps (aka RGEALTI) to 16-bit greyscale heightmaps"
-    )    
+    )
     argparser.add_argument('input_path', type=Path, help=
         "Directory or file to process. If the path is a directory, all '.mnt' files contained within will be processed."
     )
@@ -246,7 +254,7 @@ if __name__ == "__main__":
     )
     argparser.add_argument('-m', '--modifier', type=str, choices=list(func_map.keys()), default='raw', help=
         "Modifier that will be applied to altitude values"
-    ) 
+    )
     argparser.add_argument('-t', '--transparent', action='store_true', help=
         "Enable transparency on missing data. Warning: will double output image size."
     )
@@ -263,7 +271,7 @@ if __name__ == "__main__":
     process_files(
         inpaths=infiles,
         outpath=outpath,
-        downscalefactor=args.downscale_factor, 
+        downscalefactor=args.downscale_factor,
         modifier=func_map[args.modifier],
         transparency_on_empty=args.transparent
     )

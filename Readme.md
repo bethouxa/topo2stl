@@ -1,6 +1,6 @@
 # Topo2STL
 
-Converts MNT topographical data (like those provided by IGN RGEALTI/BDALTI services) into greyscale heightmaps for use in 3D modeling software. The output images are 16-bit single-channel PNGs which allow for a precision similar to those of the most precise maps provided by IGN (at worst 0.13 m resolution).
+Converts MNT topographical data (like those provided by IGN RGEALTI/BDALTI services) into greyscale heightmaps for use in 3D modeling software. The output images are greyscale PNGs with a resolution of 16 bit per channel which allow for a precision that will probably exceed the precision of your input data (0.13 m resolution).
 
 Can take arbitrarily (im)precise maps and downscale as needed to fit any area/processing capabilities.
 
