@@ -13,11 +13,13 @@ import os
 import math
 from numpy import ndarray
 from tqdm import tqdm
-import png
+
 from typing import Callable
 import itertools
 from datetime import datetime
 
+import png
+from PIL import Image,ImageFont,ImageDraw
 
 # Utility functions
 
@@ -34,8 +36,19 @@ def mapValue(value, fromRange: tuple, toRange: tuple) -> float:
     return toRange[0] + (valueScaled * toSpan)
 
 
-def coordsToIndex(x: int, y: int, nCols: int) -> int:
-    return y * nCols + x
+def get_drawn_text_bitmap(text: str, whitevalue: int, fontfam: str = 'arial', fontsize: int = 16) -> np.ndarray:
+    font = ImageFont.truetype(fontfam, fontsize)
+    left,top,right,bottom = font.getbbox(text)
+    w, h = int(right - left), int(bottom - top)
+    h *= 2
+    image = Image.new('L', (w, h), 1)
+    draw = ImageDraw.Draw(image)
+    draw.text((0, 0), text, font=font)
+    arr = np.asarray(image)
+    arr = np.where(arr, 0, 1)
+    arr = arr[(arr != 0).any(axis=1)]
+    white_on_black_arr = arr  * whitevalue
+    return white_on_black_arr
 
 
 # Class used to hold properties and accesses to the raw input files + couple computed properties
@@ -199,6 +212,12 @@ def process_files(inpaths: list, outpath: Path, max_alti: int, downscalefactor: 
             else:
                 thebigarray[int(image_x),     int(image_y)] = pixelColor
 
+        if mark_files:
+            filename_bitmap = get_drawn_text_bitmap(chunk.name, whitevalue=white_value)
+            filename_width,filename_height=np.shape(filename_bitmap)
+            # Paste the name of the file on the top left corner of its area with a hardcoded 2 px margin
+            thebigarray[chunk_corner_in_final_x+2:chunk_corner_in_final_x+2+filename_width, chunk_corner_in_final_y+2:chunk_corner_in_final_y+2+filename_height] = filename_bitmap
+
         chunk.free_data()
 
     if transparency_on_empty:
@@ -320,5 +339,5 @@ if __name__ == "__main__":
         modifier=func_map[args.modifier],
         transparency_on_empty=args.transparent,
         max_alti=args.max_altitude,
-        mark_edges=args.mark_edges
+        mark_files=args.mark_edges
     )

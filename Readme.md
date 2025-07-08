@@ -33,6 +33,9 @@ input_path
 -a max_altitude, --max-altitude max_altitude
     Forces a maximum altitude for the purposes of scaling the image
     Default is 4500 because the developer is French and has never seen a mountain taller than ~4410m.
+  
+-e, --mark-files      
+    Mark the edges of individual input files and displays the original filename in the output image
 ```
 
 ## Output images information
