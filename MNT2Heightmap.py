@@ -19,6 +19,9 @@ import itertools
 from datetime import datetime
 
 
+# Utility functions
+
+
 def mapValue(value, fromRange: tuple, toRange: tuple) -> float:
     # Figure out how 'wide' each range is
     fromSpan = fromRange[0] - fromRange[1]
@@ -35,8 +38,7 @@ def coordsToIndex(x: int, y: int, nCols: int) -> int:
     return y * nCols + x
 
 
-def downscale(x: int, y: int, factor: int) -> tuple:
-    return x*factor, y*factor
+# Class used to hold properties and accesses to the raw input files + couple computed properties
 
 
 class ASCFile:
@@ -45,7 +47,7 @@ class ASCFile:
     minX: float
     minY: float
     rowcount: int
-    cellSize: float
+    cellSize: int
     minAltitude: float
     maxAltitude: float
     _data: ndarray
@@ -71,7 +73,7 @@ class ASCFile:
                         case 4:
                             self.minY = float(re.search("[0-9.]+", line).group())
                         case 5:
-                            self.cellSize = float(re.search("[0-9.]+", line).group())
+                            self.cellSize = int(float(re.search("[0-9.]+", line).group()))  # int(float()) because the input is a string repr of a decimal number so we can't int() directly
             except Exception:
                 print("Cannot parse " + self.name)
                 raise
@@ -115,12 +117,14 @@ class ASCFile:
             return self._data
 
     def coord2index(self, x, y) -> int:
+        """Converts a (x,y) coordinate into a data index, usable for ASCFile.data"""
         return x * self.nCols + y
 
     def free_data(self) -> None:
         del self._data
 
     def simple_image(self, outpath, dsf: int, maxAlt: int = None):
+        """Generates an image from the current ASCFile. Does not support transparency, modifiers, compositing, marking, etc, see process_files for that"""
         if maxAlt is None:
             maxAlt = self.maxAltitude
         imagedata_raw: ndarray = skimage.measure.block.block_reduce(self.data, block_size=dsf, func=np.mean).astype(np.int32)
@@ -128,7 +132,10 @@ class ASCFile:
         png.from_array(imagedata_interpd.tolist(), mode="L;16").save(outpath)
 
 
-def process_files(inpaths: list, outpath: Path, max_alti: int, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = lambda x: x, mark_edges: bool = False) -> None:
+# Business functions
+
+
+def process_files(inpaths: list, outpath: Path, max_alti: int, downscalefactor: int = 1, transparency_on_empty: bool = False, modifier: Callable = lambda x: x, mark_files: bool = False) -> None:
     """Main processing step. Takes a list of file paths, stitches them together and converts them into a single, 16-bit per color, grayscale PNG heightmap"""
 
     white_value = 0xffff  # Magic constant equal to white value for the image mode used (here L;16 -> 16 bits -> 0xffff)
@@ -165,17 +172,23 @@ def process_files(inpaths: list, outpath: Path, max_alti: int, downscalefactor: 
         # No alpha channel
 
     for chunk in tqdm(ascfiles, desc="Processing file..."):
+    for chunk in tqdm(ascfiles, desc=f"Processing...", unit="file"):
         # Downsample => for example, bring 1000x1000 image to 500x500 image
         chunk_data = skimage.measure.block.block_reduce(chunk.data, block_size=downscalefactor, func=np.mean)
         # Our final image is north up, but the chunks are west-up, fix that
         chunk_data = np.rot90(chunk_data, k=3)
 
+        # Compute the offset of the chunk in the final image (position of top left/north-west/minimal-x-and-y corner)
+        chunk_corner_in_final_x = int(((chunk.minX - image_min_X) / cellSize) / downscalefactor)
+        chunk_corner_in_final_y = int(((chunk.minY - image_min_Y) / cellSize) / downscalefactor)
+
         for index in range(0, chunk_data.size):
             chunk_x, chunk_y = chunk.index2coord(index, downscalefactor)
             # Compute the positions of the "current pixel" in the final image
-            image_x = (chunk_x + ((chunk.minX - image_min_X) / cellSize) / downscalefactor)
-            image_y = (chunk_y + ((chunk.minY - image_min_Y) / cellSize) / downscalefactor)
-            if mark_edges and (chunk_x == 0 or chunk_y == 0 or chunk_x == chunk.nRows-1 or chunk_y == chunk.nCols-1):
+            # Position in final image = position in current chunk + position of corner of chunk in final image
+            image_x = chunk_corner_in_final_x + chunk_x
+            image_y = chunk_corner_in_final_y + chunk_y
+            if mark_files and (chunk_x == 0 or chunk_y == 0 or chunk_x == chunk.nRows-1 or chunk_y == chunk.nCols-1):
                 pixelColor = white_value
             else:
                 pixelColor = int(mapValue(modifier(chunk_data[chunk_x, chunk_y]), interp_source, interp_target))
@@ -193,6 +206,9 @@ def process_files(inpaths: list, outpath: Path, max_alti: int, downscalefactor: 
     else:
         img = png.from_array(thebigarray.tolist(), mode="L;16")
     img.save(outpath)
+
+
+# Benchmark helpers
 
 
 def benchmark_worker():
