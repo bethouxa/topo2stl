@@ -184,8 +184,10 @@ def process_files(inpaths: list, outpath: Path, max_alti: int, downscalefactor: 
         thebigarray = np.zeros((image_size_X, image_size_Y), dtype=np.int32)
         # No alpha channel
 
-    for chunk in tqdm(ascfiles, desc="Processing file..."):
     for chunk in tqdm(ascfiles, desc=f"Processing...", unit="file"):
+        # Double check that we don't get above the max altitude
+        if chunk.maxAltitude > max_alti:
+            print(f"Warning: input file {chunk.name} has portions going above the specified max altitude ({max_alti}) and will be truncated")
         # Downsample => for example, bring 1000x1000 image to 500x500 image
         chunk_data = skimage.measure.block.block_reduce(chunk.data, block_size=downscalefactor, func=np.mean)
         # Our final image is north up, but the chunks are west-up, fix that
@@ -204,7 +206,7 @@ def process_files(inpaths: list, outpath: Path, max_alti: int, downscalefactor: 
             if mark_files and (chunk_x == 0 or chunk_y == 0 or chunk_x == chunk.nRows-1 or chunk_y == chunk.nCols-1):
                 pixelColor = white_value
             else:
-                pixelColor = int(mapValue(modifier(chunk_data[chunk_x, chunk_y]), interp_source, interp_target))
+                pixelColor = int(mapValue(modifier(min(max_alti,chunk_data[chunk_x, chunk_y])), interp_source, interp_target))
 
             if transparency_on_empty:
                 thebigarray[int(image_x*2),   int(image_y)] = pixelColor  # Color
