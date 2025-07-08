@@ -215,30 +215,41 @@ def benchmark():
     print(str(statsFile))
 
 
-def _make_paths(inpath: Path, outpath: Path = None, dsf: int = 1, transp: bool = True, modifier: Callable = lambda x: x):
-    """Takes "human-supplied" paths and turns them into a list of actual input files, allows the user to specify
-    directories and this function will figure out the input file list (for inputs) and output file names (for outputs)."""
+# Helpers for commandline stuff
 
-    if inpath.is_dir():
-        infiles = [inpath/files for files in os.listdir(inpath) if files.endswith('.asc')]
+
+def _make_paths(inpath: Path | str, outpath: Path = None, dsf: int = 1, transp: bool = True, modifier: Callable = lambda x: x):
+    """Takes "human-supplied" paths and turns them into a valid list of inputs + valid output path for process_files,
+    allows the user to specify just about any (valid but not necessarily existing) path(s) and it will figure things out."""
+
+    # Input: 3 cases: list of files, directory, single file (invalid paths will throw FileNotFoundException from the else clause).
+    if re.fullmatch(str(inpath), '".*?"(,".*?")+'):
+        good_infiles = [Path(f) for f in inpath.split(',')]
+    elif Path(inpath).is_dir():
+        good_infiles = [Path(inpath)/files for files in os.listdir(inpath) if files.endswith('.asc')]
+        if len(good_infiles) == 0:
+            raise FileNotFoundError("No files with .asc extension found in specified directory")
     else:
-        infiles = [inpath]
+        good_infiles = [Path(inpath)]
 
+    # Output: 4 cases: is valid file path, is directory path, is not specified, and name depends on whether input is a file or list of files
     date = datetime.today().strftime('%Y-%m-%d')
-    fname = f"{inpath.name}_scale{dsf}_{"transp_" if transp else ""}{modifier.__name__}_{date}.png"
-    if outpath and not outpath.is_dir():
-        assert outpath.parent.exists()
-        outfile = outpath
-    elif outpath and outpath.is_dir():
-        assert outpath.parent.exists()
-        outfile = outpath/fname
+    if len(good_infiles) > 1:
+        basename = f"{good_infiles[0].parent.name}_scale{dsf}_{"transp_" if transp else ""}{date}.png"
     else:
-        if inpath.is_dir():
-            outfile = inpath/fname
-        else:
-            outfile = inpath.parent/fname
+        basename = f"{good_infiles[0].name}_scale{dsf}_{"transp_" if transp else ""}{date}.png"
 
-    return infiles, outfile
+    if outpath:  # Outfile specified
+        if outpath.parent.exists() and not outpath.exists():  # Valid file path
+            good_outfile = outpath
+        elif outpath.exists() and outpath.is_dir():  # Valid directory path
+            good_outfile = outpath / basename
+        else:
+            raise FileNotFoundError(f"Path {outpath} is invalid.")
+    else:  # Outfile not specified
+        good_outfile = Path(basename)
+
+    return good_infiles, good_outfile
 
 
 if __name__ == "__main__":
